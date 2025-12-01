@@ -1,0 +1,16 @@
+# Core dependencies
+PyYAML>=6.0
+tqdm>=4.65.0
+
+# LLM Providers (install as needed)
+google-generativeai>=0.5.0  # Gemini
+openai>=1.0.0               # OpenAI
+anthropic>=0.18.0           # Claude
+
+# Text extraction
+python-docx>=0.8.11         # .docx files
+PyPDF2>=3.0.0               # .pdf files
+# pdfplumber>=0.9.0         # Alternative PDF extractor
+
+# Optional: Better PDF extraction
+# textract>=1.6.5           # For .doc files (requires antiword)
