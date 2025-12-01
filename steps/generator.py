@@ -14,7 +14,7 @@ from threading import Lock
 from tqdm import tqdm
 
 from core.logger import get_logger
-from core.utils import save_json, load_json, save_jsonl, chunk_text
+from core.utils import save_json, load_json, save_jsonl, chunk_text, CacheManager
 from providers import create_providers_from_config
 
 
@@ -61,6 +61,7 @@ class QAGenerator:
     """
     Sinh cặp Q&A từ documents sử dụng LLM.
     Hỗ trợ đa luồng với mỗi API key 1 thread riêng.
+    Có cache để tránh gọi lại API cho chunks đã xử lý.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -88,6 +89,14 @@ class QAGenerator:
         # Delay config (để tránh rate limit)
         self.request_delay = config.get("request_delay", 1.0)
         
+        # Cache config
+        cache_config = config.get("cache", {})
+        self.cache = CacheManager(
+            cache_dir=cache_config.get("cache_dir", "./cache"),
+            ttl_days=cache_config.get("ttl_days", 30),
+            enabled=cache_config.get("enabled", True)
+        )
+        
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Tạo providers (1 provider / 1 API key)
@@ -102,10 +111,17 @@ class QAGenerator:
             )
             logger.info(f"Đã tạo {len(self.providers)} providers ({self.provider_name})")
         
+        # Log cache status
+        if self.cache.enabled:
+            logger.info(f"📦 Cache ENABLED - Dir: {self.cache.cache_dir}, TTL: {self.cache.ttl_days} days")
+        else:
+            logger.info("📦 Cache DISABLED")
+        
         # Tracking
         self._results_lock = Lock()
         self._all_qa_pairs = []
         self._failed_chunks = []
+        self._cache_hits = 0
     
     def generate(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -131,6 +147,7 @@ class QAGenerator:
         # Reset tracking
         self._all_qa_pairs = []
         self._failed_chunks = []
+        self._cache_hits = 0
         
         # Chia chunks cho các providers (round-robin)
         chunk_queues = self._distribute_chunks(all_chunks)
@@ -171,6 +188,10 @@ class QAGenerator:
         
         # Lưu kết quả
         self._save_results()
+        
+        # Log cache stats
+        cache_stats = self.cache.get_stats()
+        logger.info(f"📦 Cache stats: {cache_stats['hits']} hits, {cache_stats['misses']} misses ({cache_stats['hit_rate']} saved)")
         
         logger.info(f"Hoàn thành! Tổng: {len(self._all_qa_pairs)} Q&A pairs, {len(self._failed_chunks)} chunks thất bại")
         
@@ -250,15 +271,36 @@ class QAGenerator:
     
     def _generate_qa_for_chunk(self, provider, chunk: Dict) -> List[Dict[str, Any]]:
         """
-        Sinh Q&A cho 1 chunk
+        Sinh Q&A cho 1 chunk (có cache)
         
         Returns:
             List Q&A pairs hoặc None nếu lỗi
         """
+        content = chunk["content"]
+        
+        # === CHECK CACHE FIRST ===
+        cached_result = self.cache.get(
+            content=content,
+            prompt_template=self.prompt_template[:100],  # Hash phần đầu prompt
+            model=self.model
+        )
+        
+        if cached_result is not None:
+            logger.debug(f"📦 Cache HIT for chunk {chunk['doc_name']}:{chunk['chunk_id']}")
+            # Cập nhật metadata cho cached result
+            for qa in cached_result:
+                qa["source_doc"] = chunk["doc_name"]
+                qa["chunk_id"] = chunk["chunk_id"]
+                qa["from_cache"] = True
+            return cached_result
+        
+        # === CACHE MISS → CALL API ===
+        logger.debug(f"📦 Cache MISS for chunk {chunk['doc_name']}:{chunk['chunk_id']} → calling API")
+        
         # Tạo prompt
         prompt = self.prompt_template.format(
             num_qa=self.num_qa_per_chunk,
-            content=chunk["content"]
+            content=content
         )
         
         # Gọi LLM
@@ -275,6 +317,14 @@ class QAGenerator:
             for qa in qa_pairs:
                 qa["source_doc"] = chunk["doc_name"]
                 qa["chunk_id"] = chunk["chunk_id"]
+            
+            # === SAVE TO CACHE ===
+            self.cache.set(
+                content=content,
+                result=qa_pairs,
+                prompt_template=self.prompt_template[:100],
+                model=self.model
+            )
         
         return qa_pairs
     

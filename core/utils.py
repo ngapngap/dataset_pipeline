@@ -9,7 +9,7 @@ import json
 import hashlib
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def load_api_keys(filepath: str) -> List[str]:
@@ -281,3 +281,188 @@ def deduplicate_qa(qa_list: List[Dict],
             unique_qa.append(qa)
     
     return unique_qa
+
+
+# ==============================================================================
+# 📦 CACHE MANAGER - Tránh gọi lại API cho chunks đã xử lý
+# ==============================================================================
+
+class CacheManager:
+    """
+    Quản lý cache để tránh gọi lại API cho chunks đã xử lý.
+    
+    Lợi ích:
+    - Pipeline crash → không tốn tiền cho chunks đã xử lý
+    - Chạy lại pipeline → skip chunks đã có
+    - Debug/test → miễn phí
+    
+    Cách hoạt động:
+    - Hash nội dung chunk → cache key
+    - Lưu kết quả vào file JSON
+    - Tự động xóa cache quá hạn
+    """
+    
+    def __init__(self, cache_dir: str = "./cache", ttl_days: int = 30, enabled: bool = True):
+        """
+        Args:
+            cache_dir: Thư mục lưu cache
+            ttl_days: Số ngày giữ cache (0 = không xóa)
+            enabled: Bật/tắt cache
+        """
+        self.cache_dir = cache_dir
+        self.ttl_days = ttl_days
+        self.enabled = enabled
+        
+        # Stats
+        self.hits = 0
+        self.misses = 0
+        
+        if self.enabled:
+            os.makedirs(cache_dir, exist_ok=True)
+            self._cleanup_expired()
+    
+    def _get_cache_key(self, content: str, prompt_template: str = "", model: str = "") -> str:
+        """
+        Tạo cache key từ nội dung chunk + prompt + model.
+        
+        Thay đổi prompt hoặc model → cache key khác → không dùng cache cũ
+        """
+        combined = f"{content}|{prompt_template}|{model}"
+        return hashlib.sha256(combined.encode('utf-8')).hexdigest()[:16]
+    
+    def _get_cache_path(self, cache_key: str) -> str:
+        """Đường dẫn file cache"""
+        return os.path.join(self.cache_dir, f"{cache_key}.json")
+    
+    def get(self, content: str, prompt_template: str = "", model: str = "") -> Optional[List[Dict]]:
+        """
+        Lấy kết quả từ cache nếu có.
+        
+        Args:
+            content: Nội dung chunk
+            prompt_template: Template prompt (để phân biệt khi đổi prompt)
+            model: Tên model (để phân biệt khi đổi model)
+            
+        Returns:
+            Cached result hoặc None nếu không có
+        """
+        if not self.enabled:
+            return None
+        
+        cache_key = self._get_cache_key(content, prompt_template, model)
+        cache_path = self._get_cache_path(cache_key)
+        
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # Check TTL
+                if self.ttl_days > 0:
+                    created_at = datetime.fromisoformat(data.get("created_at", "2000-01-01"))
+                    if datetime.now() - created_at > timedelta(days=self.ttl_days):
+                        os.remove(cache_path)
+                        return None
+                
+                self.hits += 1
+                return data.get("result")
+                
+            except (json.JSONDecodeError, KeyError, ValueError):
+                # Cache file bị lỗi → xóa
+                os.remove(cache_path)
+                return None
+        
+        self.misses += 1
+        return None
+    
+    def set(self, content: str, result: List[Dict], prompt_template: str = "", model: str = ""):
+        """
+        Lưu kết quả vào cache.
+        
+        Args:
+            content: Nội dung chunk
+            result: Kết quả Q&A pairs
+            prompt_template: Template prompt
+            model: Tên model
+        """
+        if not self.enabled:
+            return
+        
+        cache_key = self._get_cache_key(content, prompt_template, model)
+        cache_path = self._get_cache_path(cache_key)
+        
+        data = {
+            "created_at": datetime.now().isoformat(),
+            "content_hash": hashlib.md5(content.encode()).hexdigest()[:8],
+            "model": model,
+            "result": result
+        }
+        
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            # Không crash nếu lưu cache lỗi
+            pass
+    
+    def _cleanup_expired(self):
+        """Xóa cache files quá hạn"""
+        if self.ttl_days <= 0:
+            return
+        
+        if not os.path.exists(self.cache_dir):
+            return
+        
+        expired_count = 0
+        cutoff = datetime.now() - timedelta(days=self.ttl_days)
+        
+        for filename in os.listdir(self.cache_dir):
+            if not filename.endswith('.json'):
+                continue
+            
+            filepath = os.path.join(self.cache_dir, filename)
+            
+            try:
+                # Check file modification time (nhanh hơn đọc JSON)
+                mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
+                if mtime < cutoff:
+                    os.remove(filepath)
+                    expired_count += 1
+            except Exception:
+                pass
+        
+        if expired_count > 0:
+            print(f"🗑️ Đã xóa {expired_count} cache files quá hạn")
+    
+    def clear(self):
+        """Xóa toàn bộ cache"""
+        if os.path.exists(self.cache_dir):
+            import shutil
+            shutil.rmtree(self.cache_dir)
+            os.makedirs(self.cache_dir, exist_ok=True)
+        
+        self.hits = 0
+        self.misses = 0
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Lấy thống kê cache"""
+        total = self.hits + self.misses
+        hit_rate = (self.hits / total * 100) if total > 0 else 0
+        
+        # Đếm số file cache
+        cache_files = 0
+        cache_size = 0
+        if os.path.exists(self.cache_dir):
+            for f in os.listdir(self.cache_dir):
+                if f.endswith('.json'):
+                    cache_files += 1
+                    cache_size += os.path.getsize(os.path.join(self.cache_dir, f))
+        
+        return {
+            "enabled": self.enabled,
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate": f"{hit_rate:.1f}%",
+            "cache_files": cache_files,
+            "cache_size_mb": f"{cache_size / 1024 / 1024:.2f} MB"
+        }

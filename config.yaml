@@ -161,6 +161,12 @@ processing:
   # Checkpoint - lưu tiến độ để resume
   checkpoint_enabled: true
   checkpoint_interval: 50                 # Lưu checkpoint mỗi N tasks
+  
+  # Cache - tránh gọi lại API cho chunks đã xử lý
+  cache:
+    enabled: true                         # Bật/tắt cache
+    cache_dir: "./cache"                  # Thư mục lưu cache
+    ttl_days: 30                          # Xóa cache sau N ngày
 
 # ------------------------------------------------------------------------------
 # 📝 CẤU HÌNH SINH Q&A
