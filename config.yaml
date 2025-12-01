@@ -26,7 +26,7 @@ general:
 # ------------------------------------------------------------------------------
 llm:
   # Provider chính: gemini, openai, anthropic, groq, together, ollama, custom
-  provider: "gemini"
+  provider: "megallm"
   
   # Cấu hình cho từng provider
   providers:
@@ -89,11 +89,11 @@ llm:
       temperature: 0.7
       
     # vLLM (local hoặc server)
-    vllm:
-      base_url: "http://localhost:8000/v1"
-      model: "meta-llama/Llama-3.2-8B-Instruct"
+    megallm:
+      base_url: "https://ai.megallm.io/v1"
+      model: "deepseek-ai/deepseek-v3.1"
       api_key: "vllm"
-      # api_keys_file: "./vllm_keys.txt"  # Nếu có nhiều server
+      api_keys_file: "../megallm_keys.txt"  # File chứa API keys
       max_tokens: 3000
       temperature: 0.7
       
@@ -174,27 +174,10 @@ processing:
 qa_generation:
   # Số Q&A mỗi chunk
   qa_per_chunk: 5
-  
-  # Các góc nhìn để sinh Q&A
-  perspectives:
-    - id: "worker"
-      name: "Người lao động đang làm việc"
-      enabled: true
-    - id: "retiree"
-      name: "Người chuẩn bị nghỉ hưu"
-      enabled: true
-    - id: "employer"
-      name: "Chủ doanh nghiệp/HR"
-      enabled: true
-    - id: "general"
-      name: "Người dân quan tâm BHXH"
-      enabled: true
       
-  # Prompt template (có thể customize)
+  # Prompt template đơn giản (không dùng perspectives)
   prompt_template: |
-    Bạn là chuyên viên tư vấn pháp luật BHXH. Đóng vai {perspective_name}.
-
-    📌 VĂN BẢN NGUỒN: {document_name}
+    Bạn là chuyên viên tư vấn pháp luật BHXH Việt Nam.
 
     ⚠️ QUY TẮC BẮT BUỘC:
     1. Câu hỏi phải như NGƯỜI DÂN THẬT hỏi:
@@ -203,7 +186,7 @@ qa_generation:
        ❌ "Luật này quy định về nội dung gì?" (quá chung chung)
 
     2. Câu trả lời PHẢI:
-       - Trích dẫn đầy đủ: "Theo Điều X, Khoản Y của {document_name}..."
+       - Trích dẫn đầy đủ: "Căn cứ Điều X, Khoản Y..."
        - Có số liệu cụ thể: %, VNĐ, năm/tháng
        - Giải thích dễ hiểu cho người dân
 
@@ -217,7 +200,7 @@ qa_generation:
 
     Trả về JSON array:
     [
-      {{"instruction": "câu hỏi cụ thể", "input": "", "output": "trả lời có trích dẫn đầy đủ", "source": "{source_id}", "perspective": "{perspective_id}"}}
+      {{"question": "câu hỏi cụ thể", "answer": "trả lời có trích dẫn đầy đủ"}}
     ]
 
     JSON:

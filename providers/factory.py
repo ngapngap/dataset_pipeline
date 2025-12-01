@@ -33,6 +33,10 @@ PROVIDER_PRESETS = {
         "base_url": "http://localhost:8000/v1",
         "default_key": "vllm"
     },
+    "megallm": {
+        "base_url": "https://ai.megallm.io/v1",
+        "default_key": None
+    },
     "together": {
         "base_url": "https://api.together.xyz/v1",
         "default_key": None  # Cần API key thật

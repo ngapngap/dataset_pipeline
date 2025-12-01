@@ -1,0 +1,313 @@
+# ================================================================================
+# 📋 DATASET PIPELINE V2 CONFIGURATION
+# ================================================================================
+# Pipeline tạo dataset Q&A theo hướng: Dạy STYLE, không dạy CONTENT
+# Format: ChatML (chuẩn công nghiệp)
+# Mục tiêu: Fine-tune model biết CÁCH trả lời như chuyên gia BHXH
+# ================================================================================
+
+# ------------------------------------------------------------------------------
+# 🔧 CẤU HÌNH CHUNG
+# ------------------------------------------------------------------------------
+general:
+  project_name: "bhxh-qa-v2"
+  version: "2.0"
+  description: "Dataset Q&A BHXH - ChatML format - Style-focused training"
+  language: "vi"
+  
+  # Đường dẫn
+  input_dir: "../Luat"
+  output_dir: "./output_v2"
+  laws_registry: "../legal_knowledge/laws_registry.json"
+  
+  # Logging
+  log_level: "INFO"
+  log_file: "./logs/pipeline_v2.log"
+
+# ------------------------------------------------------------------------------
+# 🎯 TRAINING PHILOSOPHY (V2)
+# ------------------------------------------------------------------------------
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  FINE-TUNE ≠ Nhớ nội dung luật                                  │
+# │  FINE-TUNE = Học CÁCH TRẢ LỜI như chuyên gia BHXH               │
+# │                                                                 │
+# │  ✅ Học format: "Căn cứ Điều X, Khoản Y..."                     │
+# │  ✅ Học thuật ngữ: "mức bình quân tiền lương", "BHXH TN"        │
+# │  ✅ Học cấu trúc: căn cứ → giải thích → kết luận               │
+# │  ✅ RAG-ready: Model biết tổng hợp từ context được cung cấp    │
+# └─────────────────────────────────────────────────────────────────┘
+training:
+  philosophy: "style_focused"  # style_focused | content_focused
+  
+  # Mục tiêu training
+  objectives:
+    - "Học cách format câu trả lời pháp luật"
+    - "Học thuật ngữ chuyên ngành BHXH"
+    - "Học cách trích dẫn điều khoản"
+    - "Học cách tổng hợp từ context (RAG-ready)"
+  
+  # KHÔNG mục tiêu
+  non_objectives:
+    - "Nhớ nội dung cụ thể của từng điều luật"
+    - "Nhớ số liệu cụ thể (có thể thay đổi)"
+
+# ------------------------------------------------------------------------------
+# 📝 OUTPUT FORMAT: ChatML (Khuyến nghị)
+# ------------------------------------------------------------------------------
+output_format:
+  # Format chính
+  type: "chatml"  # chatml | instruction | alpaca
+  
+  # ChatML structure
+  chatml:
+    # System prompt - Định nghĩa vai trò và style
+    system_prompt: |
+      Bạn là chuyên gia tư vấn Bảo hiểm xã hội Việt Nam.
+      
+      Nguyên tắc trả lời:
+      1. Luôn trích dẫn căn cứ pháp lý: "Căn cứ Điều X, Khoản Y của [Văn bản]"
+      2. Giải thích rõ ràng, dễ hiểu cho người dân
+      3. Nêu số liệu cụ thể khi có (%, số năm, số tiền)
+      4. Nếu cần thêm thông tin, hãy hỏi lại
+    
+    # Có thêm context field cho RAG không
+    include_context: true
+    context_field: "context"  # Field chứa retrieved context
+    
+  # Fallback formats
+  instruction:
+    system_field: "### Hệ thống:"
+    question_field: "### Câu hỏi:"
+    answer_field: "### Trả lời:"
+    
+  alpaca:
+    instruction_field: "instruction"
+    input_field: "input"
+    output_field: "output"
+
+# ------------------------------------------------------------------------------
+# 🤖 CẤU HÌNH LLM PROVIDER
+# ------------------------------------------------------------------------------
+llm:
+  provider: "gemini"
+  
+  providers:
+    gemini:
+      model: "gemini-2.0-flash"
+      api_keys_file: "../gemini_keys.txt"
+      max_output_tokens: 4000
+      temperature: 0.7
+      top_p: 0.9
+      rate_limit_per_minute: 60
+      
+    openai:
+      model: "gpt-4o-mini"
+      api_keys_file: "../openai_keys.txt"
+      max_tokens: 4000
+      temperature: 0.7
+      rate_limit_per_minute: 500
+
+# ------------------------------------------------------------------------------
+# 📊 QA GENERATION V2
+# ------------------------------------------------------------------------------
+qa_generation:
+  # Số Q&A mỗi chunk
+  qa_per_chunk: 5
+  
+  # Focus vào STYLE không phải CONTENT
+  style_focused: true
+  
+  # Các loại câu hỏi cần sinh
+  question_types:
+    - type: "factual"
+      description: "Hỏi về quy định cụ thể"
+      weight: 0.3
+      example: "Mức đóng BHXH của người lao động là bao nhiêu %?"
+      
+    - type: "procedural"
+      description: "Hỏi về thủ tục, quy trình"
+      weight: 0.25
+      example: "Thủ tục hưởng BHXH một lần gồm những bước nào?"
+      
+    - type: "conditional"
+      description: "Hỏi về điều kiện, trường hợp"
+      weight: 0.25
+      example: "Tôi đóng BHXH 15 năm, có đủ điều kiện hưởng lương hưu không?"
+      
+    - type: "calculation"
+      description: "Hỏi về cách tính, công thức"
+      weight: 0.2
+      example: "Cách tính mức hưởng BHXH một lần như thế nào?"
+  
+  # Answer style requirements
+  answer_style:
+    # Bắt buộc có căn cứ pháp lý
+    require_citation: true
+    citation_format: "Căn cứ {article}, {clause} của {document}"
+    
+    # Cấu trúc câu trả lời
+    structure:
+      - "Căn cứ pháp lý (điều, khoản, văn bản)"
+      - "Giải thích nội dung"
+      - "Số liệu cụ thể (nếu có)"
+      - "Lưu ý/điều kiện đặc biệt (nếu có)"
+    
+    # Min/max length
+    min_length: 150
+    max_length: 800
+  
+  # Prompt template V2 (style-focused)
+  prompt_template: |
+    Bạn là chuyên viên tư vấn pháp luật BHXH. Tạo dataset để TRAIN MODEL biết CÁCH TRẢ LỜI.
+
+    ⚠️ MỤC TIÊU: Dạy model STYLE trả lời, KHÔNG phải nhớ nội dung.
+    
+    📌 VĂN BẢN NGUỒN: {document_name}
+
+    📝 YÊU CẦU CÂU HỎI:
+    - Như người dân THẬT hỏi (tự nhiên, có ngữ cảnh cá nhân)
+    - Đa dạng: hỏi về quy định, thủ tục, điều kiện, cách tính
+    
+    📝 YÊU CẦU CÂU TRẢ LỜI (QUAN TRỌNG - đây là STYLE cần học):
+    1. MỞ ĐẦU: "Căn cứ Điều X, Khoản Y của {document_name}..."
+    2. GIẢI THÍCH: Diễn giải dễ hiểu
+    3. SỐ LIỆU: Nêu %, năm, số tiền cụ thể
+    4. KẾT LUẬN: Tóm tắt ngắn gọn
+    
+    NỘI DUNG VĂN BẢN:
+    {content}
+
+    Tạo {num_qa} cặp Q&A với STYLE CHUẨN.
+
+    JSON array:
+    [
+      {{
+        "question": "câu hỏi tự nhiên",
+        "answer": "trả lời theo STYLE chuẩn (căn cứ → giải thích → số liệu → kết luận)",
+        "question_type": "factual|procedural|conditional|calculation",
+        "cited_articles": ["Điều X", "Khoản Y"],
+        "source": "{source_id}"
+      }}
+    ]
+
+# ------------------------------------------------------------------------------
+# ⏰ TEMPORAL VALIDATION (Lọc luật cũ)
+# ------------------------------------------------------------------------------
+temporal_validation:
+  enabled: true
+  reference_date: "2025-12-01"
+  
+  # Xử lý các trường hợp
+  actions:
+    current: "keep"      # Giữ lại
+    expired: "remove"    # Loại bỏ
+    mixed: "review"      # Cần review thủ công
+    unknown: "keep"      # Giữ lại (có thể không phải văn bản pháp luật)
+
+# ------------------------------------------------------------------------------
+# ✅ QUALITY EVALUATION V2
+# ------------------------------------------------------------------------------
+quality:
+  enabled: true
+  min_score: 7  # Thang 10
+  
+  # Tiêu chí đánh giá STYLE (không đánh giá đúng/sai nội dung)
+  criteria:
+    - name: "has_citation_format"
+      weight: 3
+      description: "Có format trích dẫn chuẩn (Căn cứ Điều X, Khoản Y...)"
+      check: "regex"
+      patterns:
+        - "Căn cứ.*Điều\\s+\\d+"
+        - "Theo.*Điều\\s+\\d+.*Khoản\\s+\\d+"
+        
+    - name: "has_structure"
+      weight: 2
+      description: "Có cấu trúc rõ ràng (căn cứ → giải thích → kết luận)"
+      check: "structure"
+      
+    - name: "has_specifics"
+      weight: 2
+      description: "Có số liệu/thông tin cụ thể"
+      check: "regex"
+      patterns:
+        - "\\d+%"
+        - "\\d+\\s*(năm|tháng|ngày)"
+        - "\\d+[.,]?\\d*\\s*(đồng|VNĐ|triệu)"
+        
+    - name: "appropriate_length"
+      weight: 1
+      description: "Độ dài phù hợp (150-800 ký tự)"
+      check: "length"
+      min: 150
+      max: 800
+      
+    - name: "natural_question"
+      weight: 2
+      description: "Câu hỏi tự nhiên như người dân hỏi"
+      check: "patterns"
+      good_patterns:
+        - "^Tôi\\s"
+        - "^Xin hỏi\\s"
+        - "\\?$"
+      bad_patterns:
+        - "^Văn bản này"
+        - "^Điều\\s+\\d+"
+        - "^Nội dung"
+
+# ------------------------------------------------------------------------------
+# 📤 OUTPUT CONFIGURATION
+# ------------------------------------------------------------------------------
+output:
+  formats:
+    - "json"
+    - "jsonl"
+    
+  # Split ratios
+  train_ratio: 0.85
+  val_ratio: 0.10
+  test_ratio: 0.05
+  
+  # Deduplicate
+  deduplicate:
+    enabled: true
+    similarity_threshold: 0.85
+    
+  # Include metadata
+  include_metadata: true
+  metadata_fields:
+    - "source"
+    - "question_type"
+    - "cited_articles"
+    - "temporal_status"
+
+# ------------------------------------------------------------------------------
+# ⚙️ PROCESSING
+# ------------------------------------------------------------------------------
+processing:
+  chunk_size: 4000
+  chunk_overlap: 200
+  max_threads: 10
+  checkpoint_interval: 50
+  max_retries: 5
+  retry_delay: 2
+
+# ------------------------------------------------------------------------------
+# 📁 DOCUMENT MAPPING
+# ------------------------------------------------------------------------------
+documents:
+  mappings:
+    "41_2024_QH15": "Luật Bảo hiểm xã hội số 41/2024/QH15"
+    "51_2024_QH15": "Luật sửa đổi bổ sung Luật BHYT số 51/2024/QH15"
+    "45_2019_QH14": "Bộ luật Lao động số 45/2019/QH14"
+    "58_2014_QH13": "Luật BHXH số 58/2014/QH13 (hết hiệu lực)"
+    "157_2025_ND-CP": "Nghị định 157/2025/NĐ-CP về BHTN"
+    "158_2025_ND-CP": "Nghị định 158/2025/NĐ-CP về BHXH bắt buộc"
+    "159_2025_ND-CP": "Nghị định 159/2025/NĐ-CP về BHXH tự nguyện"
+    "176_2025_ND-CP": "Nghị định 176/2025/NĐ-CP về điều chỉnh lương hưu"
+    "188_2025_ND-CP": "Nghị định 188/2025/NĐ-CP về mức lương hưu tối thiểu"
+    
+  ignore_patterns:
+    - "Ghichu*"
+    - "*.csv"
+    - "*58_2014*"  # Bỏ qua luật cũ

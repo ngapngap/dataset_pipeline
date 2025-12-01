@@ -167,7 +167,8 @@ class DatasetPipeline:
             "prompt_template": qa_cfg.get("prompt_template"),
             "output_dir": os.path.join(output_dir, "generated"),
             "save_interval": proc_cfg.get("checkpoint_interval", 50),
-            "request_delay": 60.0 / provider_cfg.get("rate_limit_per_minute", 60)
+            "request_delay": 60.0 / provider_cfg.get("rate_limit_per_minute", 60),
+            "cache": proc_cfg.get("cache", {"enabled": True, "cache_dir": "./cache", "ttl_days": 30})
         }
     
     def _build_evaluator_config(self) -> Dict[str, Any]:
