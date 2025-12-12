@@ -3,11 +3,13 @@
 Configuration Manager - Load và quản lý config từ YAML
 """
 
+from __future__ import annotations
+
 import os
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 
 
 @dataclass
@@ -98,7 +100,28 @@ class OutputConfig:
 class PipelineConfig:
     """Main configuration class"""
     
-    def __init__(self, config_path: str = None):
+    config_path: str
+    base_dir: str
+    _raw_config: Dict[str, Any]
+    
+    # Parsed config attributes
+    project_name: str
+    description: str
+    language: str
+    input_dir: str
+    output_dir: str
+    log_level: str
+    log_file: str
+    llm_provider: str
+    llm_providers: Dict[str, LLMProviderConfig]
+    processing: ProcessingConfig
+    qa_generation: QAGenerationConfig
+    quality: QualityConfig
+    output: OutputConfig
+    document_mappings: Dict[str, str]
+    ignore_patterns: List[str]
+    
+    def __init__(self, config_path: Optional[str] = None) -> None:
         self.config_path = config_path or self._find_config()
         self.base_dir = os.path.dirname(os.path.abspath(self.config_path))
         
@@ -112,8 +135,15 @@ class PipelineConfig:
         self._setup_directories()
     
     def _find_config(self) -> str:
-        """Tìm file config.yaml"""
-        search_paths = [
+        """Tìm file config.yaml
+        
+        Returns:
+            Đường dẫn tuyệt đối tới config.yaml
+            
+        Raises:
+            FileNotFoundError: Nếu không tìm thấy config.yaml
+        """
+        search_paths: List[str] = [
             "./config.yaml",
             "../config.yaml",
             os.path.join(os.path.dirname(__file__), "..", "config.yaml")
@@ -125,12 +155,16 @@ class PipelineConfig:
         
         raise FileNotFoundError("Không tìm thấy config.yaml")
     
-    def _load_yaml(self) -> Dict:
-        """Load YAML file"""
+    def _load_yaml(self) -> Dict[str, Any]:
+        """Load YAML file
+        
+        Returns:
+            Dict chứa config đã parse từ YAML
+        """
         with open(self.config_path, 'r', encoding='utf-8') as f:
             return yaml.safe_load(f)
     
-    def _parse_config(self):
+    def _parse_config(self) -> None:
         """Parse config thành các objects"""
         # General
         general = self._raw_config.get('general', {})
@@ -206,12 +240,19 @@ class PipelineConfig:
         self.ignore_patterns = docs.get('ignore_patterns', [])
     
     def _resolve_path(self, path: str) -> str:
-        """Resolve đường dẫn tương đối"""
+        """Resolve đường dẫn tương đối
+        
+        Args:
+            path: Đường dẫn có thể là tương đối hoặc tuyệt đối
+            
+        Returns:
+            Đường dẫn tuyệt đối đã chuẩn hóa
+        """
         if os.path.isabs(path):
             return path
         return os.path.normpath(os.path.join(self.base_dir, path))
     
-    def _setup_directories(self):
+    def _setup_directories(self) -> None:
         """Tạo các thư mục cần thiết"""
         dirs = [
             self.output_dir,

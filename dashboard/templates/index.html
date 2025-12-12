@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <header class="header">
+            <h1>📊 Pipeline Dashboard</h1>
+            <div class="status" id="connection-status">
+                <span class="status-dot"></span>
+                <span class="status-text">Đang kết nối...</span>
+            </div>
+        </header>
+
+        <!-- Main Stats Grid -->
+        <main class="main-grid">
+            <!-- Current Step Card -->
+            <div class="card step-card">
+                <div class="card-header">
+                    <h2>🎯 Bước hiện tại</h2>
+                </div>
+                <div class="card-body">
+                    <div class="step-name" id="current-step">Idle</div>
+                    <div class="elapsed-time" id="elapsed-time">--:--</div>
+                </div>
+            </div>
+
+            <!-- Progress Card -->
+            <div class="card progress-card">
+                <div class="card-header">
+                    <h2>📈 Tiến độ</h2>
+                </div>
+                <div class="card-body">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span id="chunks-processed">0</span> / <span id="chunks-total">0</span>
+                        (<span id="progress-percent">0</span>%)
+                    </div>
+                    <div class="progress-rate">
+                        <span id="processing-rate">0</span> chunks/phút
+                    </div>
+                    <div class="progress-eta">
+                        Còn lại: <span id="estimated-remaining">N/A</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- QA Stats Card -->
+            <div class="card qa-card">
+                <div class="card-header">
+                    <h2>💬 Q&A Generated</h2>
+                </div>
+                <div class="card-body">
+                    <div class="stat-grid">
+                        <div class="stat-item">
+                            <span class="stat-value" id="qa-generated">0</span>
+                            <span class="stat-label">Tổng</span>
+                        </div>
+                        <div class="stat-item good">
+                            <span class="stat-value" id="qa-good">0</span>
+                            <span class="stat-label">Good</span>
+                        </div>
+                        <div class="stat-item bad">
+                            <span class="stat-value" id="qa-bad">0</span>
+                            <span class="stat-label">Bad</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="qa-good-rate">0%</span>
+                            <span class="stat-label">Tỷ lệ</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cache Stats Card -->
+            <div class="card cache-card">
+                <div class="card-header">
+                    <h2>📦 Cache</h2>
+                </div>
+                <div class="card-body">
+                    <div class="stat-grid">
+                        <div class="stat-item good">
+                            <span class="stat-value" id="cache-hits">0</span>
+                            <span class="stat-label">Hits</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="cache-misses">0</span>
+                            <span class="stat-label">Misses</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="cache-hit-rate">0%</span>
+                            <span class="stat-label">Hit Rate</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chunks Stats Card -->
+            <div class="card chunks-card">
+                <div class="card-header">
+                    <h2>📄 Chunks</h2>
+                </div>
+                <div class="card-body">
+                    <div class="stat-grid">
+                        <div class="stat-item good">
+                            <span class="stat-value" id="chunks-success">0</span>
+                            <span class="stat-label">Thành công</span>
+                        </div>
+                        <div class="stat-item bad">
+                            <span class="stat-value" id="chunks-failed">0</span>
+                            <span class="stat-label">Thất bại</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Errors Card -->
+            <div class="card errors-card">
+                <div class="card-header">
+                    <h2>⚠️ Lỗi gần đây</h2>
+                    <span class="error-count" id="error-count">0</span>
+                </div>
+                <div class="card-body">
+                    <div class="error-list" id="error-list">
+                        <div class="no-errors">Không có lỗi</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="footer-info">
+                Cập nhật mỗi giây • 
+                <span id="last-update">--:--:--</span>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>
+

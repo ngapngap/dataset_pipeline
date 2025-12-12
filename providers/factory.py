@@ -3,7 +3,9 @@
 Provider Factory - Tạo provider theo config
 """
 
-from typing import Dict, Any, List
+from __future__ import annotations
+
+from typing import Dict, Any, List, Optional, Type
 from .base import BaseLLMProvider
 from .gemini import GeminiProvider
 from .openai import OpenAIProvider
@@ -12,15 +14,15 @@ from .custom import CustomLLMProvider
 
 
 # Registry các provider chuẩn
-PROVIDER_REGISTRY = {
+PROVIDER_REGISTRY: Dict[str, Type[BaseLLMProvider]] = {
     "gemini": GeminiProvider,
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
     "custom": CustomLLMProvider,
 }
 
-# Preset cho các provider phổ biến
-PROVIDER_PRESETS = {
+# Preset cho các provider phổ biến (OpenAI-compatible)
+PROVIDER_PRESETS: Dict[str, Dict[str, Optional[str]]] = {
     "ollama": {
         "base_url": "http://localhost:11434/v1",
         "default_key": "ollama"
@@ -68,8 +70,8 @@ def create_provider(
     provider_name: str,
     api_key: str,
     model: str,
-    generation_config: Dict[str, Any] = None,
-    base_url: str = None
+    generation_config: Optional[Dict[str, Any]] = None,
+    base_url: Optional[str] = None
 ) -> BaseLLMProvider:
     """
     Factory function để tạo LLM provider
@@ -134,10 +136,10 @@ def create_provider(
 
 def create_providers_from_config(
     provider_name: str,
-    api_keys: list,
+    api_keys: List[str],
     model: str,
-    generation_config: Dict[str, Any] = None,
-    base_url: str = None
+    generation_config: Optional[Dict[str, Any]] = None,
+    base_url: Optional[str] = None
 ) -> List[BaseLLMProvider]:
     """
     Tạo danh sách provider từ danh sách API keys

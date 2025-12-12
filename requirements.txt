@@ -14,3 +14,23 @@ PyPDF2>=3.0.0               # .pdf files
 
 # Optional: Better PDF extraction
 # textract>=1.6.5           # For .doc files (requires antiword)
+
+# ============================================
+# Testing
+# ============================================
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
+
+# ============================================
+# Dashboard (optional - for monitoring)
+# ============================================
+fastapi>=0.100.0
+uvicorn>=0.22.0
+websockets>=11.0
+jinja2>=3.0.0
+
+# ============================================
+# Development (optional)
+# ============================================
+# mypy>=1.0.0               # Type checking

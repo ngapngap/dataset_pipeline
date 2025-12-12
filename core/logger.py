@@ -3,17 +3,19 @@
 Logger Module - Logging với màu sắc và file output
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, ClassVar
 
 
 class ColorFormatter(logging.Formatter):
     """Formatter với màu sắc cho console"""
     
-    COLORS = {
+    COLORS: ClassVar[Dict[str, str]] = {
         'DEBUG': '\033[36m',     # Cyan
         'INFO': '\033[32m',      # Green
         'WARNING': '\033[33m',   # Yellow
@@ -22,7 +24,7 @@ class ColorFormatter(logging.Formatter):
         'RESET': '\033[0m'
     }
     
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         # Windows không hỗ trợ ANSI colors tốt
         if sys.platform == 'win32':
             return super().format(record)
@@ -33,17 +35,27 @@ class ColorFormatter(logging.Formatter):
 
 
 class Logger:
-    """Logger singleton cho pipeline"""
+    """Logger singleton cho pipeline
     
-    _instance: Optional['Logger'] = None
-    _logger: Optional[logging.Logger] = None
+    Attributes:
+        _instance: Singleton instance
+        _logger: Underlying logging.Logger instance
+    """
     
-    def __new__(cls, *args, **kwargs):
+    _instance: ClassVar[Optional[Logger]] = None
+    _logger: ClassVar[Optional[logging.Logger]] = None
+    
+    def __new__(cls, *args: str, **kwargs: str) -> Logger:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, name: str = "pipeline", level: str = "INFO", log_file: str = None):
+    def __init__(
+        self, 
+        name: str = "pipeline", 
+        level: str = "INFO", 
+        log_file: Optional[str] = None
+    ) -> None:
         if Logger._logger is not None:
             return
         
@@ -130,7 +142,7 @@ def get_logger(name: str = None) -> logging.Logger:
     return Logger._logger
 
 
-def setup_logger(log_file: str = None, level: str = "INFO"):
+def setup_logger(log_file: Optional[str] = None, level: str = "INFO") -> None:
     """
     Setup logger với file output.
     

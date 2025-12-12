@@ -3,12 +3,14 @@
 Utility Functions
 """
 
+from __future__ import annotations
+
 import os
 import re
 import json
 import hashlib
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union, Tuple
 from datetime import datetime, timedelta
 
 
@@ -300,9 +302,27 @@ class CacheManager:
     - Hash nội dung chunk → cache key
     - Lưu kết quả vào file JSON
     - Tự động xóa cache quá hạn
+    
+    Attributes:
+        cache_dir: Thư mục lưu cache
+        ttl_days: Số ngày giữ cache
+        enabled: Bật/tắt cache
+        hits: Số lần cache hit
+        misses: Số lần cache miss
     """
     
-    def __init__(self, cache_dir: str = "./cache", ttl_days: int = 30, enabled: bool = True):
+    cache_dir: str
+    ttl_days: int
+    enabled: bool
+    hits: int
+    misses: int
+    
+    def __init__(
+        self, 
+        cache_dir: str = "./cache", 
+        ttl_days: int = 30, 
+        enabled: bool = True
+    ) -> None:
         """
         Args:
             cache_dir: Thư mục lưu cache
@@ -438,7 +458,7 @@ class CacheManager:
         
         return True
     
-    def _cleanup_expired(self):
+    def _cleanup_expired(self) -> None:
         """Xóa cache files quá hạn"""
         if self.ttl_days <= 0:
             return
@@ -467,7 +487,7 @@ class CacheManager:
         if expired_count > 0:
             print(f"🗑️ Đã xóa {expired_count} cache files quá hạn")
     
-    def invalidate(self, cache_key: str):
+    def invalidate(self, cache_key: str) -> None:
         """
         Xóa một cache entry cụ thể theo key.
         
@@ -484,7 +504,7 @@ class CacheManager:
             except Exception:
                 pass
     
-    def clear(self):
+    def clear(self) -> None:
         """Xóa toàn bộ cache"""
         if os.path.exists(self.cache_dir):
             import shutil

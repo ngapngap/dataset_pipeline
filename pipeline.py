@@ -6,7 +6,11 @@ THAY ĐỔI SO VỚI V1:
 1. Thêm bước "split" - Document-based split để tránh data leakage
 2. Thêm bước "tokenize" - Tokenization với labels cho Causal LM
 3. Cải thiện export với nhiều format hơn
+4. Input validation trước khi chạy
+5. Error handling và graceful degradation
 """
+
+from __future__ import annotations
 
 import os
 import time
@@ -16,6 +20,12 @@ from datetime import datetime
 from core.config import PipelineConfig
 from core.logger import get_logger, setup_logger
 from core.utils import save_json, load_json
+from core.validators import ConfigValidator, ValidationResult
+from core.errors import (
+    ConfigurationError, 
+    PipelineError, 
+    ErrorSummary
+)
 from steps.extractor import TextExtractor
 from steps.generator import QAGenerator
 from steps.evaluator import QualityEvaluator
@@ -23,6 +33,14 @@ from steps.rescuer import QARescuer
 from steps.regenerator import ChunkRegenerator
 from steps.splitter import DatasetSplitter
 from steps.tokenizer import DatasetTokenizer
+
+# Optional: Dashboard metrics
+try:
+    from dashboard.metrics import MetricsCollector, get_metrics_collector
+    DASHBOARD_AVAILABLE = True
+except ImportError:
+    DASHBOARD_AVAILABLE = False
+    MetricsCollector = None
 
 
 logger = get_logger(__name__)
@@ -46,10 +64,18 @@ class DatasetPipeline:
     Note: Tokenize được bỏ qua vì mỗi model có tokenizer riêng.
     """
     
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(
+        self, 
+        config_path: str = "config.yaml",
+        skip_validation: bool = False
+    ) -> None:
         """
         Args:
             config_path: Đường dẫn tới file config
+            skip_validation: Bỏ qua validation (không khuyến khích)
+            
+        Raises:
+            ConfigurationError: Nếu config không hợp lệ
         """
         # Lưu config path để resolve relative paths
         self.config_path = os.path.abspath(config_path)
@@ -69,8 +95,20 @@ class DatasetPipeline:
         logger.info(f"=== Pipeline: {self.project_name} ===")
         logger.info(f"Config: {config_path}")
         
+        # Validate config
+        if not skip_validation:
+            self._validate_config()
+        
+        # Error tracking
+        self.error_summary = ErrorSummary()
+        
+        # Metrics collector for dashboard
+        self.metrics: Optional[Any] = None
+        if DASHBOARD_AVAILABLE:
+            self.metrics = get_metrics_collector()
+        
         # State tracking
-        self.state = {
+        self.state: Dict[str, Any] = {
             "started_at": None,
             "steps_completed": [],
             "current_step": None,
@@ -85,6 +123,38 @@ class DatasetPipeline:
 
         # Initialize steps
         self._init_steps()
+    
+    def _validate_config(self) -> None:
+        """Validate config trước khi chạy
+        
+        Raises:
+            ConfigurationError: Nếu có lỗi validation
+        """
+        logger.info("Validating config...")
+        
+        validator = ConfigValidator(self.config)
+        result = validator.validate_all()
+        
+        # Log warnings
+        for warning in result.warnings:
+            logger.warning(f"[{warning.field}] {warning.message}")
+            if warning.suggestion:
+                logger.warning(f"  Suggestion: {warning.suggestion}")
+        
+        # Check errors
+        if not result.is_valid:
+            error_messages = result.get_error_messages()
+            for err in result.errors:
+                logger.error(f"[{err.field}] {err.message}")
+                if err.suggestion:
+                    logger.error(f"  Suggestion: {err.suggestion}")
+            
+            raise ConfigurationError(
+                message=f"Config validation failed with {len(result.errors)} error(s)",
+                field="config"
+            )
+        
+        logger.info("✅ Config validation passed")
     
     def _init_steps(self):
         """Khởi tạo các steps"""
