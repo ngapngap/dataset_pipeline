@@ -1,0 +1,293 @@
+# ================================================================================
+# DATASET PIPELINE CONFIGURATION - EXAMPLE
+# ================================================================================
+# Copy file nay thanh config.yaml va sua theo cau hinh cua ban
+# cp config.example.yaml config.yaml
+# ================================================================================
+
+# ------------------------------------------------------------------------------
+# CAU HINH CHUNG
+# ------------------------------------------------------------------------------
+general:
+  project_name: "bhxh-qa-vietnamese"
+  description: "Dataset Q&A ve Bao hiem xa hoi Viet Nam"
+  language: "vi"
+
+  # Duong dan
+  input_dir: "./data"                     # Thu muc chua van ban nguon
+  output_dir: "./output"                  # Thu muc output
+
+  # Logging
+  log_level: "INFO"                       # DEBUG, INFO, WARNING, ERROR
+  log_file: "./logs/pipeline.log"
+
+# ------------------------------------------------------------------------------
+# CAU HINH LLM PROVIDER
+# ------------------------------------------------------------------------------
+llm:
+  # Provider chinh: gemini, openai, anthropic, ollama, deepseek, together, groq, etc.
+  provider: "gemini"
+
+  # Cau hinh cho tung provider
+  providers:
+    # === STANDARD PROVIDERS ===
+    gemini:
+      model: "gemini-2.0-flash"
+      api_keys_file: "./keys/gemini_keys.txt"   # Tao file nay va them API keys
+      max_output_tokens: 3000
+      temperature: 0.7
+      top_p: 0.9
+      rate_limit_per_minute: 60
+
+    openai:
+      model: "gpt-4o-mini"
+      api_keys_file: "./keys/openai_keys.txt"
+      max_tokens: 3000
+      temperature: 0.7
+      top_p: 0.9
+      rate_limit_per_minute: 500
+
+    anthropic:
+      model: "claude-3-haiku-20240307"
+      api_keys_file: "./keys/anthropic_keys.txt"
+      max_tokens: 3000
+      temperature: 0.7
+      rate_limit_per_minute: 60
+
+    # === CUSTOM PROVIDERS (OpenAI-compatible) ===
+    # Co the dung api_key (1 key) hoac api_keys_file (nhieu keys)
+
+    # Ollama (local)
+    ollama:
+      base_url: "http://localhost:11434/v1"
+      model: "llama3.2"                        # hoac qwen2.5, mistral, etc.
+      api_key: "ollama"                        # Local khong can key that
+      max_tokens: 3000
+      temperature: 0.7
+
+    # LM Studio (local)
+    lmstudio:
+      base_url: "http://localhost:1234/v1"
+      model: "local-model"
+      api_key: "lm-studio"
+      max_tokens: 3000
+      temperature: 0.7
+
+    # DeepSeek
+    deepseek:
+      base_url: "https://api.deepseek.com/v1"
+      model: "deepseek-chat"
+      api_keys_file: "./keys/deepseek_keys.txt"
+      max_tokens: 3000
+      temperature: 0.7
+
+    # Together AI
+    together:
+      base_url: "https://api.together.xyz/v1"
+      model: "meta-llama/Llama-3-70b-chat-hf"
+      api_keys_file: "./keys/together_keys.txt"
+      max_tokens: 3000
+      temperature: 0.7
+
+    # Groq
+    groq:
+      base_url: "https://api.groq.com/openai/v1"
+      model: "llama-3.1-70b-versatile"
+      api_keys_file: "./keys/groq_keys.txt"
+      max_tokens: 3000
+      temperature: 0.7
+
+    # OpenRouter
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      model: "meta-llama/llama-3.1-8b-instruct"
+      api_keys_file: "./keys/openrouter_keys.txt"
+      max_tokens: 3000
+      temperature: 0.7
+
+    # NVIDIA NIM API
+    nvidia:
+      base_url: "https://integrate.api.nvidia.com/v1"
+      model: "meta/llama-3.1-8b-instruct"
+      api_keys_file: "./keys/nvidia_keys.txt"
+      max_tokens: 3000
+      temperature: 0.7
+
+# ------------------------------------------------------------------------------
+# CAU HINH XU LY
+# ------------------------------------------------------------------------------
+processing:
+  # === THREADING CONFIG ===
+  # So threads cho moi API key:
+  # - Mac dinh = 1 (moi key 1 thread, an toan cho moi provider)
+  # - OpenAI/Gemini: co the tang len 5-10 (rate limit cao)
+  # - Provider cham (local): giu = 1
+  threads_per_key: 5
+
+  # Gioi han tong so threads:
+  # - Dat = 0 -> khong gioi han (dung tat ca: num_keys x threads_per_key)
+  max_threads: 50
+
+  # Chunk settings
+  chunk_size: 4000                        # Kich thuoc chunk (characters)
+  chunk_overlap: 200                      # Overlap giua cac chunks
+
+  # Retry settings
+  max_retries: 5                          # So lan retry khi loi
+  retry_delay: 2                          # Delay giua cac retry (seconds)
+
+  # Rate limiting
+  requests_per_minute: 60                 # Gioi han requests/phut
+
+  # Checkpoint - luu tien do de resume
+  checkpoint_enabled: true
+  checkpoint_interval: 50                 # Luu checkpoint moi N tasks
+
+  # Cache - tranh goi lai API cho chunks da xu ly
+  cache:
+    enabled: true                         # Bat/tat cache
+    cache_dir: "./cache"                  # Thu muc luu cache
+    ttl_days: 30                          # Xoa cache sau N ngay
+
+# ------------------------------------------------------------------------------
+# CAU HINH SINH Q&A
+# ------------------------------------------------------------------------------
+qa_generation:
+  # So Q&A moi chunk
+  qa_per_chunk: 5
+
+  # Prompt template
+  prompt_template: |
+    Ban la chuyen vien tu van phap luat BHXH Viet Nam.
+
+    QUY TAC BAT BUOC:
+    1. Cau hoi phai nhu NGUOI DAN THAT hoi:
+       - "Toi dong BHXH bao nhieu nam thi duoc huong luong huu?"
+       - "Muc dong BHXH hang thang cua toi la bao nhieu phan tram?"
+
+    2. Cau tra loi PHAI CO SO HIEU VAN BAN DAY DU:
+       - DUNG: "Can cu Dieu 21, Khoan 2 Luat BHXH so 41/2024/QH15..."
+       - SAI: "Can cu Dieu 21, Khoan 2 Luat nay..." (THIEU so hieu!)
+
+    3. Cau tra loi PHAI CO:
+       - SO HIEU van ban: XX/YYYY/QH15, XX/YYYY/ND-CP, XX/YYYY/TT-BYT...
+       - Dieu khoan cu the: Dieu X, Khoan Y
+       - So lieu cu the: %, VND, nam/thang
+       - Giai thich de hieu cho nguoi dan
+
+    4. CHI tao Q&A neu van ban co thong tin CU THE
+       - Neu chi la dinh nghia chung -> tra ve []
+
+    NOI DUNG VAN BAN:
+    {content}
+
+    Tao {num_qa} cap hoi-dap CHAT LUONG CAO. NHO GHI SO HIEU VAN BAN!
+
+    Tra ve JSON array:
+    [
+      {{"question": "cau hoi cu the", "answer": "tra loi co SO HIEU van ban + dieu khoan"}}
+    ]
+
+    JSON:
+
+# ------------------------------------------------------------------------------
+# CAU HINH DANH GIA CHAT LUONG
+# ------------------------------------------------------------------------------
+quality:
+  # Bat/tat danh gia
+  enabled: true
+
+  # Diem toi thieu (1-5) de giu Q&A - se nhan 2 thanh scale 1-10
+  min_score: 4
+
+  # Cac tieu chi danh gia
+  criteria:
+    - name: "has_legal_citation"
+      weight: 2
+      description: "Co trich dan van ban phap luat"
+      patterns:
+        - "Luat\\s+[\\wA-z]+"
+        - "Nghi dinh\\s+\\d+"
+        - "Thong tu\\s+\\d+"
+        - "Dieu\\s+\\d+"
+        - "Khoan\\s+\\d+"
+
+    - name: "has_numbers"
+      weight: 1
+      description: "Co so lieu cu the"
+      patterns:
+        - "\\d+%"
+        - "\\d+\\s*(nam|thang|ngay)"
+        - "\\d+[.,]?\\d*\\s*(VND|dong|trieu|ty)"
+
+    - name: "min_length"
+      weight: 1
+      description: "Do dai toi thieu"
+      min_chars: 100
+
+  # Dung LLM de danh gia (ton them API)
+  use_llm_evaluation: false
+
+  # Max iterations cho regenerate loop
+  max_regenerate_iterations: 3
+
+# ------------------------------------------------------------------------------
+# CAU HINH OUTPUT
+# ------------------------------------------------------------------------------
+output:
+  # Format output
+  formats:
+    - "json"                              # JSON file
+    - "jsonl"                             # JSON Lines
+
+  # Cau truc output
+  structure:
+    instruction_field: "instruction"
+    input_field: "input"
+    output_field: "output"
+    metadata_fields:
+      - "source"
+      - "created_at"
+
+  # Deduplicate
+  deduplicate:
+    enabled: true
+    similarity_threshold: 0.9             # Nguong tuong dong (0-1)
+
+  # Split ratios
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+# ------------------------------------------------------------------------------
+# CAU HINH EXPORT (ChatML format)
+# ------------------------------------------------------------------------------
+export:
+  # Format: chat (ChatML) | instruction | simple
+  format: "chat"
+
+  # System prompt cho chatbot
+  system_prompt: |
+    Ban la chuyen gia tu van Bao hiem xa hoi Viet Nam.
+
+    Nguyen tac tra loi:
+    1. Luon trich dan can cu phap ly (so hieu van ban, dieu, khoan)
+    2. Giai thich ro rang, de hieu cho nguoi dan
+    3. Neu khong chac chan, huong dan lien he co quan BHXH dia phuong
+
+# ------------------------------------------------------------------------------
+# DOCUMENT MAPPING - TEN VAN BAN PHAP LUAT
+# ------------------------------------------------------------------------------
+documents:
+  # Mapping tu filename pattern -> ten day du
+  mappings:
+    "41_2024_QH15": "Luat Bao hiem xa hoi so 41/2024/QH15"
+    "58_2014_QH13": "Luat Bao hiem xa hoi so 58/2014/QH13"
+    "46_2014_QH13": "Luat Bao hiem y te so 46/2014/QH13"
+    "45_2019_QH14": "Bo luat Lao dong so 45/2019/QH14"
+
+  # Files/patterns to ignore
+  ignore_patterns:
+    - "Ghichu*"
+    - "*.csv"
+    - "temp_*"

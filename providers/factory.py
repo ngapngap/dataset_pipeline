@@ -57,6 +57,10 @@ PROVIDER_PRESETS = {
         "base_url": "https://openrouter.ai/api/v1",
         "default_key": None
     },
+    "nvidia": {
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "default_key": None
+    },
 }
 
 
@@ -97,10 +101,9 @@ def create_provider(
             retry_delay=config.get("retry_delay", 5.0)
         )
     
-    # Check nếu là custom với base_url
-    if provider_name_lower == "custom" or base_url:
-        if not base_url:
-            raise ValueError("Custom provider cần base_url")
+    # Check nếu có base_url (bất kỳ provider nào có base_url đều dùng CustomLLMProvider)
+    # Điều này cho phép người dùng tự định nghĩa provider tùy chỉnh trong config.yaml
+    if base_url:
         return CustomLLMProvider(
             api_key=api_key,
             model=model,
@@ -112,10 +115,10 @@ def create_provider(
             retry_delay=config.get("retry_delay", 5.0)
         )
     
-    # Standard providers
+    # Standard providers (gemini, openai, anthropic)
     if provider_name_lower not in PROVIDER_REGISTRY:
-        available = list(PROVIDER_REGISTRY.keys()) + list(PROVIDER_PRESETS.keys())
-        raise ValueError(f"Provider không hỗ trợ: {provider_name}. Các provider có sẵn: {available}")
+        available = list(PROVIDER_REGISTRY.keys()) + list(PROVIDER_PRESETS.keys()) + ["<any_name_with_base_url>"]
+        raise ValueError(f"Provider không hỗ trợ: {provider_name}. Các provider có sẵn: {available}. Hoặc thêm base_url vào config để dùng custom provider.")
     
     provider_class = PROVIDER_REGISTRY[provider_name_lower]
     return provider_class(

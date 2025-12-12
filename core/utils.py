@@ -405,6 +405,39 @@ class CacheManager:
             # Không crash nếu lưu cache lỗi
             pass
     
+    def exists(self, content: str, prompt_template: str = "", model: str = "") -> bool:
+        """
+        Kiểm tra xem cache có tồn tại không (không load data).
+        Dùng để đếm nhanh số chunks đã cache.
+        
+        Args:
+            content: Nội dung chunk
+            prompt_template: Template prompt
+            model: Tên model
+            
+        Returns:
+            True nếu cache tồn tại và còn hạn
+        """
+        if not self.enabled:
+            return False
+        
+        cache_key = self._get_cache_key(content, prompt_template, model)
+        cache_path = self._get_cache_path(cache_key)
+        
+        if not os.path.exists(cache_path):
+            return False
+        
+        # Check TTL nếu cần
+        if self.ttl_days > 0:
+            try:
+                mtime = datetime.fromtimestamp(os.path.getmtime(cache_path))
+                if datetime.now() - mtime > timedelta(days=self.ttl_days):
+                    return False
+            except Exception:
+                return False
+        
+        return True
+    
     def _cleanup_expired(self):
         """Xóa cache files quá hạn"""
         if self.ttl_days <= 0:
@@ -433,6 +466,23 @@ class CacheManager:
         
         if expired_count > 0:
             print(f"🗑️ Đã xóa {expired_count} cache files quá hạn")
+    
+    def invalidate(self, cache_key: str):
+        """
+        Xóa một cache entry cụ thể theo key.
+        
+        Args:
+            cache_key: Cache key (16 ký tự hex) cần xóa
+        """
+        if not self.enabled:
+            return
+        
+        cache_path = self._get_cache_path(cache_key)
+        if os.path.exists(cache_path):
+            try:
+                os.remove(cache_path)
+            except Exception:
+                pass
     
     def clear(self):
         """Xóa toàn bộ cache"""

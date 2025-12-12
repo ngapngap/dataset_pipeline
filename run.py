@@ -1,21 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-Dataset Pipeline CLI
-Công cụ command-line để chạy pipeline tạo dataset
+Dataset Pipeline V2 CLI - Fully Automatic
 
-Sử dụng:
-    python run.py                      # Chạy toàn bộ pipeline
-    python run.py --steps extract      # Chỉ chạy bước extract
-    python run.py --steps generate evaluate  # Chạy generate và evaluate
-    python run.py --resume             # Resume từ state đã lưu
-    python run.py --config my_config.yaml  # Dùng config khác
+Usage:
+    python run.py
+
+Pipeline will automatically:
+1. Check each step's completion status
+2. Skip completed steps
+3. Run remaining steps
+4. Handle errors and auto-retry
+
+Additional options:
+    python run.py --force              # Force restart from beginning
+    python run.py --step extract       # Run single step (debug/test)
+    python run.py -c custom.yaml       # Use different config
 """
 
 import argparse
 import sys
 import os
 
-# Thêm current dir vào path
+# Add current dir to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from pipeline import DatasetPipeline
@@ -27,100 +33,122 @@ logger = get_logger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Dataset Pipeline - Tạo dataset Q&A từ tài liệu",
+        description="Dataset Pipeline V2 - Auto Q&A Dataset Generator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Ví dụ:
-  python run.py                           # Chạy toàn bộ pipeline
-  python run.py --steps extract           # Chỉ extract text
-  python run.py --steps generate          # Chỉ generate Q&A
-  python run.py --steps evaluate export   # Evaluate và export
-  python run.py --resume                  # Resume từ checkpoint
-  python run.py -c custom_config.yaml     # Dùng config khác
+Usage:
+  python run.py                    # Run full pipeline (auto)
+  python run.py --force            # Force restart
+  python run.py --step evaluate    # Run single step (debug/test)
+  python run.py -c custom.yaml     # Use different config
+
+Pipeline Steps (auto-skip if completed):
+  1. extract    - Extract text from PDF/documents
+  2. generate   - Generate Q&A pairs using LLM
+  3. evaluate   - Evaluate + Rescue + Regenerate (all-in-one)
+  4. split      - Split by DOCUMENT (prevent data leakage)
+  5. export     - Export final dataset
         """
     )
-    
+
     parser.add_argument(
         "-c", "--config",
         type=str,
         default="config.yaml",
-        help="Đường dẫn tới file config (default: config.yaml)"
+        help="Path to config file (default: config.yaml)"
     )
-    
+
     parser.add_argument(
-        "-s", "--steps",
-        nargs="+",
-        choices=["extract", "generate", "evaluate", "export"],
-        help="Các bước cần chạy (default: tất cả)"
+        "--step",
+        type=str,
+        choices=["extract", "generate", "evaluate", "split", "export"],
+        help="Run single step only (for debug/test)"
     )
-    
+
     parser.add_argument(
-        "--resume",
+        "--force",
         action="store_true",
-        help="Resume từ state đã lưu"
+        help="Force restart, ignore checkpoints"
     )
-    
+
     parser.add_argument(
         "--retry-failed",
         action="store_true",
-        help="Thử lại các chunks thất bại trong bước generate"
+        help="Retry failed chunks in generate step"
     )
-    
+
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help="Hiển thị log chi tiết"
+        help="Show detailed logs"
     )
-    
+
     args = parser.parse_args()
-    
+
     # Check config exists
     if not os.path.exists(args.config):
-        print(f"❌ Không tìm thấy file config: {args.config}")
-        print("   Hãy tạo file config.yaml hoặc chỉ định đường dẫn với -c")
+        print(f"Config not found: {args.config}")
+        print("   Create config.yaml or specify path with -c")
         sys.exit(1)
-    
+
     try:
         # Initialize pipeline
-        print(f"📋 Loading config: {args.config}")
+        print(f"Loading config: {args.config}")
         pipeline = DatasetPipeline(args.config)
-        
+
         if args.retry_failed:
             # Retry failed chunks
-            print("🔄 Retry failed chunks...")
+            print("Retry failed chunks...")
             pipeline.generator.retry_failed()
-            
-        elif args.resume:
-            # Resume from saved state
-            print("▶️ Resuming pipeline...")
-            result = pipeline.resume()
-            
+
+        elif args.step:
+            # Run single step (debug/test mode)
+            print(f"Running single step: {args.step}")
+            result = pipeline.run(steps=[args.step])
+
+        elif args.force:
+            # Force run from scratch
+            print("Force running pipeline from scratch...")
+            result = pipeline.run()
+
         else:
-            # Run pipeline
-            print("🚀 Starting pipeline...")
-            result = pipeline.run(steps=args.steps)
-        
+            # Auto mode - pipeline checks and skips completed steps
+            print("Starting Pipeline V2 (auto mode)...")
+            result = pipeline.run_auto()
+
         # Print summary
         print("\n" + "="*50)
-        print("📊 PIPELINE SUMMARY")
+        print("PIPELINE V2 SUMMARY")
         print("="*50)
-        
+
         if isinstance(result, dict):
+            print(f"  Version: {result.get('version', '2.0')}")
             print(f"  Project: {result.get('project', 'N/A')}")
             print(f"  Documents: {result.get('documents', 0)}")
             print(f"  Q&A Generated: {result.get('qa_pairs_generated', 0)}")
             print(f"  Good Q&A: {result.get('good_qa', 0)}")
+            rescued = result.get('rescued_qa', 0)
+            if rescued:
+                print(f"  Rescued Q&A: {rescued}")
             print(f"  Bad Q&A: {result.get('bad_qa', 0)}")
             print(f"  Success Rate: {result.get('success_rate', 0):.1f}%")
-        
-        print("\n✅ Pipeline completed!")
-        
+
+            # V2: Show splits info
+            splits = result.get('splits', {})
+            if splits:
+                print(f"\n  Document-based Splits:")
+                print(f"    Train: {splits.get('train', 0)} samples")
+                print(f"    Validation: {splits.get('validation', 0)} samples")
+                print(f"    Test: {splits.get('test', 0)} samples")
+
+        print("\nPipeline V2 completed!")
+
     except KeyboardInterrupt:
-        print("\n⚠️ Pipeline bị dừng bởi user")
+        print("\nPipeline stopped by user")
         sys.exit(1)
-        
+
     except Exception as e:
-        print(f"\n❌ Pipeline lỗi: {e}")
+        print(f"\nPipeline error: {e}")
         logger.exception("Pipeline error")
         sys.exit(1)
 

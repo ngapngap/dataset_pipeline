@@ -55,13 +55,19 @@ class CustomLLMProvider(BaseLLMProvider):
             from openai import OpenAI
             self.client = OpenAI(
                 api_key=self.api_key,
-                base_url=self.base_url
+                base_url=self.base_url,
+                timeout=120.0  # 2 phút timeout cho API chậm như megallm
             )
         except ImportError:
             raise ImportError("Cần cài đặt: pip install openai")
     
     def _call_api(self, prompt: str) -> Optional[str]:
         """Call custom API endpoint"""
+        import time
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        start_time = time.time()
         try:
             # Build request params
             request_params = {
@@ -78,12 +84,19 @@ class CustomLLMProvider(BaseLLMProvider):
             request_params.update(self.extra_params)
             
             response = self.client.chat.completions.create(**request_params)
+            elapsed = time.time() - start_time
             
             if response.choices and response.choices[0].message.content:
-                return response.choices[0].message.content.strip()
+                result = response.choices[0].message.content.strip()
+                logger.info(f"✅ API response received in {elapsed:.1f}s ({len(result)} chars)")
+                return result
+            
+            logger.warning(f"⚠️ API returned empty response after {elapsed:.1f}s")
             return None
             
         except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"❌ API error after {elapsed:.1f}s: {type(e).__name__}: {str(e)[:100]}")
             raise e
     
     @property

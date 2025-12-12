@@ -481,13 +481,13 @@ class TestQualityEvaluator(unittest.TestCase):
 
 class TestPipelineIntegration(unittest.TestCase):
     """Test tích hợp pipeline"""
-    
+
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.input_dir = os.path.join(self.temp_dir, "input")
         self.output_dir = os.path.join(self.temp_dir, "output")
         os.makedirs(self.input_dir)
-        
+
         # Tạo config file
         self.config_file = os.path.join(self.temp_dir, "config.yaml")
         config_content = f"""
@@ -511,7 +511,7 @@ output:
 """
         with open(self.config_file, 'w', encoding='utf-8') as f:
             f.write(config_content)
-        
+
         # Tạo test document
         test_doc = """
 LUẬT BẢO HIỂM XÃ HỘI (TEST)
@@ -529,34 +529,171 @@ Người sử dụng lao động đóng 17.5% quỹ tiền lương.
 """
         with open(os.path.join(self.input_dir, "luat_bhxh_test.txt"), 'w', encoding='utf-8') as f:
             f.write(test_doc)
-    
+
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
-    
+
     def test_extractor_step(self):
         """Test bước extract hoạt động"""
         from steps.extractor import TextExtractor
-        
+
         extractor = TextExtractor({
             "input_dir": self.input_dir,
             "output_dir": self.output_dir
         })
-        
+
         documents = extractor.extract_all()
-        
+
         self.assertEqual(len(documents), 1)
         self.assertIn("Điều 1", documents[0]["content"])
         self.assertIn("Điều 5", documents[0]["content"])
 
 
+class TestDatasetSplitter(unittest.TestCase):
+    """Test steps/splitter.py - V2"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_split_by_document(self):
+        """Test split theo document"""
+        from steps.splitter import DatasetSplitter
+
+        splitter = DatasetSplitter({
+            "train_ratio": 0.6,
+            "val_ratio": 0.2,
+            "test_ratio": 0.2,
+            "seed": 42,
+            "output_dir": self.temp_dir
+        })
+
+        qa_pairs = [
+            {"question": "Q1 from Doc A", "answer": "A1", "source_doc": "doc_a.txt"},
+            {"question": "Q2 from Doc A", "answer": "A2", "source_doc": "doc_a.txt"},
+            {"question": "Q3 from Doc A", "answer": "A3", "source_doc": "doc_a.txt"},
+            {"question": "Q1 from Doc B", "answer": "A1", "source_doc": "doc_b.txt"},
+            {"question": "Q2 from Doc B", "answer": "A2", "source_doc": "doc_b.txt"},
+            {"question": "Q1 from Doc C", "answer": "A1", "source_doc": "doc_c.txt"},
+            {"question": "Q2 from Doc C", "answer": "A2", "source_doc": "doc_c.txt"},
+            {"question": "Q1 from Doc D", "answer": "A1", "source_doc": "doc_d.txt"},
+            {"question": "Q1 from Doc E", "answer": "A1", "source_doc": "doc_e.txt"},
+        ]
+
+        splits = splitter.split(qa_pairs)
+
+        # Check có đủ splits
+        self.assertIn("train", splits)
+        self.assertIn("validation", splits)
+        self.assertIn("test", splits)
+
+        # Check tổng số samples đúng
+        total = len(splits["train"]) + len(splits["validation"]) + len(splits["test"])
+        self.assertEqual(total, len(qa_pairs))
+
+    def test_no_document_overlap(self):
+        """Test không có document overlap giữa các splits"""
+        from steps.splitter import DatasetSplitter
+
+        splitter = DatasetSplitter({
+            "train_ratio": 0.5,
+            "val_ratio": 0.25,
+            "test_ratio": 0.25,
+            "seed": 42,
+            "output_dir": self.temp_dir
+        })
+
+        qa_pairs = [
+            {"question": "Q1", "answer": "A1", "source_doc": "doc_a"},
+            {"question": "Q2", "answer": "A2", "source_doc": "doc_a"},
+            {"question": "Q3", "answer": "A3", "source_doc": "doc_b"},
+            {"question": "Q4", "answer": "A4", "source_doc": "doc_c"},
+            {"question": "Q5", "answer": "A5", "source_doc": "doc_d"},
+        ]
+
+        splits = splitter.split(qa_pairs)
+
+        # Validate không có overlap
+        is_valid = splitter.validate_no_leakage(splits)
+        self.assertTrue(is_valid)
+
+    def test_validate_detects_leakage(self):
+        """Test phát hiện data leakage"""
+        from steps.splitter import DatasetSplitter
+
+        splitter = DatasetSplitter({
+            "output_dir": self.temp_dir
+        })
+
+        # Tạo splits có overlap (giả lập lỗi)
+        splits = {
+            "train": [{"question": "Q1", "source_doc": "same_doc"}],
+            "validation": [{"question": "Q2", "source_doc": "same_doc"}],  # Overlap!
+            "test": [{"question": "Q3", "source_doc": "other_doc"}]
+        }
+
+        is_valid = splitter.validate_no_leakage(splits)
+        self.assertFalse(is_valid)  # Phải phát hiện overlap
+
+
+class TestDatasetTokenizer(unittest.TestCase):
+    """Test steps/tokenizer.py - V2"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_format_chat(self):
+        """Test format chat template"""
+        from steps.tokenizer import DatasetTokenizer
+
+        tokenizer = DatasetTokenizer({
+            "model_name": "Viet-Mistral/Vistral-7B-Chat",
+            "template_name": "vistral",
+            "output_dir": self.temp_dir
+        })
+
+        formatted = tokenizer.format_chat(
+            question="Mức đóng BHXH là bao nhiêu?",
+            answer="Mức đóng là 8% tiền lương."
+        )
+
+        # Check format đúng
+        self.assertIn("[INST]", formatted)
+        self.assertIn("[/INST]", formatted)
+        self.assertIn("Mức đóng BHXH là bao nhiêu?", formatted)
+        self.assertIn("Mức đóng là 8% tiền lương.", formatted)
+
+    def test_format_prompt_only(self):
+        """Test format phần prompt (để tính mask length)"""
+        from steps.tokenizer import DatasetTokenizer
+
+        tokenizer = DatasetTokenizer({
+            "template_name": "vistral",
+            "output_dir": self.temp_dir
+        })
+
+        prompt = tokenizer.format_prompt_only("Test question?")
+
+        self.assertIn("[INST]", prompt)
+        self.assertIn("Test question?", prompt)
+        self.assertIn("[/INST]", prompt)
+        # Prompt không chứa answer
+        self.assertTrue(prompt.endswith(" "))
+
+
 def run_quick_test():
     """Chạy test nhanh không cần pytest"""
     print("=" * 60)
-    print("🧪 DATASET PIPELINE - QUICK TEST")
+    print("DATASET PIPELINE V2 - QUICK TEST")
     print("=" * 60)
-    
+
     # Test imports
-    print("\n📦 Testing imports...")
+    print("\n[1] Testing imports...")
     try:
         from core.config import PipelineConfig
         from core.logger import get_logger
@@ -565,27 +702,29 @@ def run_quick_test():
         from steps.extractor import TextExtractor
         from steps.generator import QAGenerator
         from steps.evaluator import QualityEvaluator
-        print("   ✅ All imports successful")
+        from steps.splitter import DatasetSplitter  # V2
+        from steps.tokenizer import DatasetTokenizer  # V2
+        print("   All imports successful")
     except ImportError as e:
-        print(f"   ❌ Import error: {e}")
+        print(f"   [FAIL] Import error: {e}")
         return False
     
     # Test utils
-    print("\n🔧 Testing utils...")
+    print("\n[2] Testing utils...")
     try:
         chunks = chunk_text("A" * 5000, chunk_size=1000)
         assert len(chunks) > 1, "Chunk text failed"
-        print(f"   ✅ chunk_text: {len(chunks)} chunks created")
+        print(f"   [OK] chunk_text: {len(chunks)} chunks created")
         
         providers = get_available_providers()
         assert "gemini" in providers, "Gemini not in providers"
-        print(f"   ✅ Providers available: {providers}")
+        print(f"   [OK] Providers available: {providers}")
     except Exception as e:
-        print(f"   ❌ Utils error: {e}")
+        print(f"   [FAIL] Utils error: {e}")
         return False
     
     # Test evaluator rules
-    print("\n📊 Testing evaluator rules...")
+    print("\n[3] Testing evaluator rules...")
     try:
         temp_dir = tempfile.mkdtemp()
         evaluator = QualityEvaluator({
@@ -609,21 +748,72 @@ def run_quick_test():
         
         shutil.rmtree(temp_dir, ignore_errors=True)
         
-        print(f"   ✅ With legal citation: score={score1:.1f} ({reason1})")
-        print(f"   ✅ Without citation: score={score2:.1f} ({reason2})")
+        print(f"   [OK] With legal citation: score={score1:.1f} ({reason1})")
+        print(f"   [OK] Without citation: score={score2:.1f} ({reason2})")
         
         assert score1 > score2, "Scoring logic incorrect"
-        print("   ✅ Scoring logic correct (with citation > without)")
+        print("   Scoring logic correct (with citation > without)")
     except Exception as e:
-        print(f"   ❌ Evaluator error: {e}")
+        print(f"   Evaluator error: {e}")
         return False
-    
+
+    # V2: Test splitter
+    print("\nTesting V2 Splitter...")
+    try:
+        temp_dir = tempfile.mkdtemp()
+        splitter = DatasetSplitter({
+            "train_ratio": 0.6,
+            "val_ratio": 0.2,
+            "test_ratio": 0.2,
+            "seed": 42,
+            "output_dir": temp_dir
+        })
+
+        qa_pairs = [
+            {"question": "Q1", "answer": "A1", "source_doc": "doc_a"},
+            {"question": "Q2", "answer": "A2", "source_doc": "doc_a"},
+            {"question": "Q3", "answer": "A3", "source_doc": "doc_b"},
+            {"question": "Q4", "answer": "A4", "source_doc": "doc_c"},
+            {"question": "Q5", "answer": "A5", "source_doc": "doc_d"},
+        ]
+
+        splits = splitter.split(qa_pairs)
+        is_valid = splitter.validate_no_leakage(splits)
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+        print(f"   Splits: train={len(splits['train'])}, val={len(splits['validation'])}, test={len(splits['test'])}")
+        assert is_valid, "Data leakage detected!"
+        print("   No data leakage - document-based split working!")
+    except Exception as e:
+        print(f"   Splitter error: {e}")
+        return False
+
+    # V2: Test tokenizer
+    print("\nTesting V2 Tokenizer...")
+    try:
+        temp_dir = tempfile.mkdtemp()
+        tokenizer = DatasetTokenizer({
+            "template_name": "vistral",
+            "output_dir": temp_dir
+        })
+
+        formatted = tokenizer.format_chat("Test question?", "Test answer.")
+        assert "[INST]" in formatted, "Template format wrong"
+        assert "Test question?" in formatted, "Question not in output"
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        print(f"   Format chat: OK (contains [INST] and question)")
+    except Exception as e:
+        print(f"   Tokenizer error: {e}")
+        return False
+
     print("\n" + "=" * 60)
-    print("✅ ALL QUICK TESTS PASSED!")
+    print("ALL QUICK TESTS PASSED!")
     print("=" * 60)
-    print("\nĐể chạy full test suite:")
-    print("  python -m pytest tests/ -v")
-    
+    print("\nPipeline V2 Ready!")
+    print("  Run: python run.py --steps split tokenize export")
+
     return True
 
 
