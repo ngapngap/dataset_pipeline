@@ -63,6 +63,10 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Optional[str]]] = {
         "base_url": "https://integrate.api.nvidia.com/v1",
         "default_key": None
     },
+    "perplexity": {
+        "base_url": "https://api.perplexity.ai",
+        "default_key": None
+    },
 }
 
 

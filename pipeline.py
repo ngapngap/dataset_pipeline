@@ -699,7 +699,11 @@ class DatasetPipeline:
                 self.state["good_qa"].extend(good)
                 self.state["bad_qa"].extend(bad)
 
-            logger.info(f"Kết quả: {len(good)} good ({len(good)/len(self.state['qa_pairs'])*100:.1f}%), {len(bad)} bad")
+            total_qa = len(self.state.get('qa_pairs', []))
+            if total_qa > 0:
+                logger.info(f"Kết quả: {len(good)} good ({len(good)/total_qa*100:.1f}%), {len(bad)} bad")
+            else:
+                logger.info(f"Kết quả: {len(good)} good, {len(bad)} bad (không có Q&A để đánh giá)")
             logger.info(f"Tổng tích lũy: {len(self.state['good_qa'])} good, {len(self.state['bad_qa'])} bad")
 
             if not bad:
