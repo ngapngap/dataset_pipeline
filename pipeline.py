@@ -13,6 +13,7 @@ THAY ĐỔI SO VỚI V1:
 from __future__ import annotations
 
 import os
+import json
 import time
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -31,8 +32,8 @@ from steps.generator import QAGenerator
 from steps.evaluator import QualityEvaluator
 from steps.rescuer import QARescuer
 from steps.regenerator import ChunkRegenerator
+from steps.filter import QAFilter
 from steps.splitter import DatasetSplitter
-from steps.tokenizer import DatasetTokenizer
 
 # Optional: Dashboard metrics
 try:
@@ -118,7 +119,6 @@ class DatasetPipeline:
             "bad_qa": [],
             "rescued_qa": [],
             "splits": {},  # V2: train/val/test splits
-            "tokenized_splits": {}  # V2: tokenized data
         }
 
         # Initialize steps
@@ -175,7 +175,6 @@ class DatasetPipeline:
         os.makedirs(os.path.join(output_dir, "generated"), exist_ok=True)
         os.makedirs(os.path.join(output_dir, "evaluated"), exist_ok=True)
         os.makedirs(os.path.join(output_dir, "split"), exist_ok=True)  # V2
-        os.makedirs(os.path.join(output_dir, "tokenized"), exist_ok=True)  # V2
         os.makedirs(os.path.join(output_dir, "final"), exist_ok=True)
         
         # Text Extractor
@@ -208,13 +207,14 @@ class DatasetPipeline:
         regenerator_config = self._build_regenerator_config()
         self.regenerator = ChunkRegenerator(regenerator_config)
 
+        # QA Filter (loại bỏ câu hỏi không có ngữ cảnh rõ ràng)
+        filter_config = self._build_filter_config()
+        self.filter = QAFilter(filter_config)
+
         # V2: Dataset Splitter (document-based split)
         splitter_config = self._build_splitter_config()
         self.splitter = DatasetSplitter(splitter_config)
 
-        # V2: Dataset Tokenizer
-        tokenizer_config = self._build_tokenizer_config()
-        self.tokenizer = DatasetTokenizer(tokenizer_config)
     
     def _build_generator_config(self) -> Dict[str, Any]:
         """Build config cho QA Generator từ YAML config"""
@@ -340,9 +340,13 @@ class DatasetPipeline:
         if not os.path.isabs(output_dir):
             output_dir = os.path.join(os.path.dirname(self.config_path), output_dir)
         
+        # Path đến extracted documents để trích số hiệu từ nội dung
+        extracted_docs_path = os.path.join(output_dir, "extracted", "extracted_documents.json")
+        
         return {
             "output_dir": os.path.join(output_dir, "evaluated"),
             "min_score": quality_cfg.get("min_score", 4) * 2,  # Convert 1-5 scale to 1-10
+            "extracted_docs_path": extracted_docs_path,
         }
     
     def _build_regenerator_config(self) -> Dict[str, Any]:
@@ -361,6 +365,13 @@ class DatasetPipeline:
             "min_good_count": regenerate_cfg.get("min_good_count", 1),
         }
 
+    def _build_filter_config(self) -> Dict[str, Any]:
+        """Build config cho QA Filter"""
+        filter_cfg = self.config.get("filter", {})
+        return {
+            "enabled": filter_cfg.get("enabled", True)
+        }
+    
     def _build_splitter_config(self) -> Dict[str, Any]:
         """Build config cho Dataset Splitter từ YAML config"""
         output_cfg = self.config.get("output", {})
@@ -378,26 +389,6 @@ class DatasetPipeline:
             "output_dir": os.path.join(output_dir, "split")
         }
 
-    def _build_tokenizer_config(self) -> Dict[str, Any]:
-        """Build config cho Dataset Tokenizer từ YAML config"""
-        tokenizer_cfg = self.config.get("tokenizer", {})
-
-        # Get output dir
-        output_dir = self.config.get("general.output_dir", "./output")
-        if not os.path.isabs(output_dir):
-            output_dir = os.path.join(os.path.dirname(self.config_path), output_dir)
-
-        return {
-            "model_name": tokenizer_cfg.get("model_name", "Viet-Mistral/Vistral-7B-Chat"),
-            "template_name": tokenizer_cfg.get("template_name", "vistral"),
-            "max_length": tokenizer_cfg.get("max_length", 2048),
-            "padding": tokenizer_cfg.get("padding", "max_length"),
-            "truncation": tokenizer_cfg.get("truncation", True),
-            "system_prompt": tokenizer_cfg.get("system_prompt",
-                "Bạn là trợ lý AI chuyên về lĩnh vực pháp luật Việt Nam, đặc biệt về bảo hiểm xã hội."),
-            "mask_prompt": tokenizer_cfg.get("mask_prompt", True),
-            "output_dir": os.path.join(output_dir, "tokenized")
-        }
     
     def _load_api_keys(self, keys_file: str) -> List[str]:
         """Load API keys từ file"""
@@ -598,8 +589,23 @@ class DatasetPipeline:
     
     def _run_extract(self):
         """Bước 1: Extract text từ documents"""
+        # Live status
+        self._save_live_status("extract", 0, 0)
+        
+        # Notify metrics
+        if self.metrics:
+            self.metrics.start_step("extract", 0)
+        
         self.state["documents"] = self.extractor.extract_all()
         logger.info(f"Đã extract {len(self.state['documents'])} documents")
+        
+        # Update live status
+        self._save_live_status("extract", len(self.state["documents"]), len(self.state["documents"]),
+                               docs_extracted=len(self.state["documents"]))
+        
+        # End step
+        if self.metrics:
+            self.metrics.end_step()
     
     def _run_generate(self):
         """Bước 2: Generate Q&A pairs"""
@@ -610,8 +616,32 @@ class DatasetPipeline:
                 logger.error("Không có documents! Hãy chạy bước 'extract' trước.")
                 return
         
+        # Notify metrics - tính tổng chunks
+        if self.metrics:
+            from core.utils import chunk_text
+            total_chunks = 0
+            chunk_size = self.config.get("processing.chunk_size", 4000)
+            chunk_overlap = self.config.get("processing.chunk_overlap", 200)
+            for doc in self.state["documents"]:
+                content = doc.get("content", "")
+                if content:
+                    chunks = chunk_text(content, chunk_size, chunk_overlap)
+                    total_chunks += len(chunks)
+            self.metrics.start_step("generate", total_chunks)
+            # Pass metrics to generator
+            self.generator.set_metrics(self.metrics)
+        
         self.state["qa_pairs"] = self.generator.generate(self.state["documents"])
         logger.info(f"Đã generate {len(self.state['qa_pairs'])} Q&A pairs")
+        
+        # Update live status
+        self._save_live_status("generate_done", 
+                               qa_generated=len(self.state["qa_pairs"]),
+                               docs_extracted=len(self.state["documents"]))
+        
+        # End step
+        if self.metrics:
+            self.metrics.end_step()
     
     def _run_evaluate(self):
         """
@@ -636,6 +666,14 @@ class DatasetPipeline:
             else:
                 logger.error("Không có Q&A pairs! Hãy chạy bước 'generate' trước.")
                 return
+        
+        # Live status
+        self._save_live_status("evaluate", 0, len(self.state["qa_pairs"]),
+                               qa_generated=len(self.state["qa_pairs"]))
+        
+        # Notify metrics
+        if self.metrics:
+            self.metrics.start_step("evaluate", len(self.state["qa_pairs"]))
 
         # Config cho regenerate loop
         max_iterations = self.config.get("quality.max_regenerate_iterations", 3)
@@ -651,10 +689,18 @@ class DatasetPipeline:
             logger.info(f"\n📊 [1/3] Evaluating {len(self.state['qa_pairs'])} Q&A pairs...")
             good, bad = self.evaluator.evaluate(self.state["qa_pairs"])
 
-            self.state["good_qa"] = good
-            self.state["bad_qa"] = bad
+            # Iteration 1: Ghi đè hoàn toàn
+            # Iteration 2+: Merge với kết quả cũ (đã loại bỏ Q&A của chunks regenerate ở bước trước)
+            if iteration == 1:
+                self.state["good_qa"] = good
+                self.state["bad_qa"] = bad
+            else:
+                # Merge kết quả mới vào kết quả cũ
+                self.state["good_qa"].extend(good)
+                self.state["bad_qa"].extend(bad)
 
             logger.info(f"Kết quả: {len(good)} good ({len(good)/len(self.state['qa_pairs'])*100:.1f}%), {len(bad)} bad")
+            logger.info(f"Tổng tích lũy: {len(self.state['good_qa'])} good, {len(self.state['bad_qa'])} bad")
 
             if not bad:
                 logger.info("✅ Không có bad Q&A! Hoàn thành evaluate.")
@@ -758,6 +804,21 @@ class DatasetPipeline:
         logger.info(f"Good: {len(self.state['good_qa'])} ({len(self.state['good_qa'])/total_qa*100:.1f}%)")
         logger.info(f"Rescued: {len(self.state.get('rescued_qa', []))}")
         logger.info(f"Bad: {len(self.state['bad_qa'])} ({len(self.state['bad_qa'])/total_qa*100:.1f}%)")
+        
+        # Update live status
+        self._save_live_status("evaluate_done", 
+                               processed=total_qa, total=total_qa,
+                               qa_generated=total_qa,
+                               qa_good=len(self.state['good_qa']),
+                               qa_bad=len(self.state['bad_qa']))
+        
+        # Update metrics
+        if self.metrics:
+            self.metrics.record_qa_evaluated(
+                good=len(self.state['good_qa']),
+                bad=len(self.state['bad_qa'])
+            )
+            self.metrics.end_step()
         logger.info(f"Iterations: {iteration}")
 
     def _save_evaluate_results(self, output_dir: str):
@@ -787,11 +848,34 @@ class DatasetPipeline:
         if not self.state["good_qa"]:
             logger.error("Không có good Q&A! Hãy chạy bước 'evaluate' trước.")
             return
+        
+        # Live status
+        self._save_live_status("split", 0, len(self.state["good_qa"]),
+                               qa_good=len(self.state["good_qa"]))
+        
+        # Notify metrics
+        if self.metrics:
+            self.metrics.start_step("split", len(self.state["good_qa"]))
 
-        logger.info(f"Bắt đầu split {len(self.state['good_qa'])} Q&A pairs theo document...")
+        # Filter QA có câu hỏi không có ngữ cảnh rõ ràng
+        logger.info(f"Bắt đầu filter {len(self.state['good_qa'])} Q&A pairs...")
+        filtered_qa, removed_qa = self.filter.filter(self.state["good_qa"])
+        
+        if removed_qa:
+            logger.info(f"Đã loại bỏ {len(removed_qa)} QA có câu hỏi không có ngữ cảnh rõ ràng")
+            # Lưu removed QA để review
+            output_dir = self.config.get("general.output_dir", "./output")
+            if not os.path.isabs(output_dir):
+                output_dir = os.path.join(os.path.dirname(self.config_path), output_dir)
+            removed_file = os.path.join(output_dir, "split", "qa_removed_low_quality.json")
+            os.makedirs(os.path.dirname(removed_file), exist_ok=True)
+            save_json(removed_qa, removed_file)
+            logger.info(f"Đã lưu removed QA -> {removed_file}")
+        
+        logger.info(f"Bắt đầu split {len(filtered_qa)} Q&A pairs theo document...")
 
         # Split theo document
-        self.state["splits"] = self.splitter.split(self.state["good_qa"])
+        self.state["splits"] = self.splitter.split(filtered_qa)
 
         # Validate không có data leakage
         is_valid = self.splitter.validate_no_leakage(self.state["splits"])
@@ -802,39 +886,26 @@ class DatasetPipeline:
         logger.info(f"Split hoàn thành: train={len(self.state['splits'].get('train', []))}, "
                     f"val={len(self.state['splits'].get('validation', []))}, "
                     f"test={len(self.state['splits'].get('test', []))}")
+        
+        # Live status
+        total_split = sum(len(v) for v in self.state['splits'].values())
+        self._save_live_status("split_done", processed=total_split, total=total_split,
+                               qa_good=len(self.state["good_qa"]))
+        
+        # End metrics
+        if self.metrics:
+            self.metrics.end_step()
 
-    def _run_tokenize(self):
-        """Bước 5: Tokenize dataset với labels cho fine-tuning"""
-        # Load splits nếu chưa có
-        if not self.state["splits"]:
-            self.state["splits"] = self.splitter.load_splits()
-
-        if not any(self.state["splits"].values()):
-            logger.error("Không có splits! Hãy chạy bước 'split' trước.")
-            return
-
-        logger.info("Bắt đầu tokenize dataset...")
-
-        # Tokenize tất cả splits
-        self.state["tokenized_splits"] = self.tokenizer.tokenize_splits(self.state["splits"])
-
-        # Tạo HuggingFace Dataset nếu có thể
-        try:
-            hf_dataset = self.tokenizer.create_hf_dataset(self.state["tokenized_splits"])
-            if hf_dataset:
-                logger.info("Đã tạo HuggingFace Dataset")
-        except Exception as e:
-            logger.warning(f"Không thể tạo HuggingFace Dataset: {e}")
-
-        # Log stats
-        for split_name, data in self.state["tokenized_splits"].items():
-            if data:
-                stats = self.tokenizer.get_stats(data)
-                logger.info(f"  {split_name}: {stats.get('total_samples', 0)} samples, "
-                            f"avg {stats.get('avg_length', 0):.0f} tokens")
     
     def _run_export(self):
-        """Bước 6: Export dataset cuối cùng"""
+        """Bước 5: Export dataset cuối cùng"""
+        # Live status
+        self._save_live_status("export", 0, 0)
+        
+        # Notify metrics
+        if self.metrics:
+            self.metrics.start_step("export", 0)
+        
         # Get output dir
         output_dir = self.config.get("general.output_dir", "./output")
         if not os.path.isabs(output_dir):
@@ -859,6 +930,13 @@ class DatasetPipeline:
                 # Fallback cuối: Load good Q&A và tự split (như v1)
                 logger.warning("Không tìm thấy splits, sử dụng random split (có thể gây data leakage)")
                 self._export_legacy(final_dir)
+        
+        # Live status - completed
+        self._save_live_status("completed", 100, 100)
+        
+        # End metrics
+        if self.metrics:
+            self.metrics.end_step()
 
     def _export_from_splits(self, final_dir: str):
         """Export từ document-based splits (V2) với ChatML format"""
@@ -1041,6 +1119,56 @@ Nguyên tắc trả lời:
         
         logger.info(f"Split: train={len(train_data)}, val={len(val_data)}, test={len(test_data)}")
     
+    def _save_live_status(self, step: str, processed: int = 0, total: int = 0, **kwargs):
+        """
+        Ghi file live status cho Dashboard real-time
+        
+        Args:
+            step: Tên bước hiện tại (extract, generate, evaluate, split, export)
+            processed: Số items đã xử lý
+            total: Tổng số items
+            **kwargs: Các thông tin bổ sung (qa_generated, cache_hits, etc.)
+        """
+        try:
+            output_dir = self.config.get("general.output_dir", "./output")
+            if not os.path.isabs(output_dir):
+                output_dir = os.path.join(os.path.dirname(self.config_path), output_dir)
+            
+            status_file = os.path.join(output_dir, "live_status.json")
+            
+            # Tính elapsed time
+            elapsed_seconds = 0
+            started_at = self.state.get("started_at")
+            if started_at:
+                try:
+                    from datetime import datetime
+                    start_time = datetime.fromisoformat(started_at)
+                    elapsed_seconds = (datetime.now() - start_time).total_seconds()
+                except:
+                    pass
+
+            status = {
+                "step": step,
+                "chunks_processed": processed,
+                "chunks_total": total,
+                "qa_generated": kwargs.get("qa_generated", len(self.state.get("qa_pairs", []))),
+                "qa_good": kwargs.get("qa_good", len(self.state.get("good_qa", []))),
+                "qa_bad": kwargs.get("qa_bad", len(self.state.get("bad_qa", []))),
+                "qa_rescued": kwargs.get("qa_rescued", len(self.state.get("rescued_qa", []))),
+                "docs_extracted": kwargs.get("docs_extracted", len(self.state.get("documents", []))),
+                "cache_hits": kwargs.get("cache_hits", 0),
+                "cache_misses": kwargs.get("cache_misses", 0),
+                "failed_chunks": kwargs.get("failed_chunks", 0),
+                "started_at": started_at,
+                "elapsed_seconds": elapsed_seconds,
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            with open(status_file, 'w', encoding='utf-8') as f:
+                json.dump(status, f, ensure_ascii=False)
+        except Exception:
+            pass  # Không để lỗi ảnh hưởng pipeline
+
     def _save_state(self):
         """Lưu state của pipeline"""
         output_dir = self.config.get("general.output_dir", "./output")
@@ -1060,11 +1188,8 @@ Nguyên tắc trả lời:
             "qa_pairs_count": len(self.state["qa_pairs"]),
             "good_qa_count": len(self.state["good_qa"]),
             "bad_qa_count": len(self.state["bad_qa"]),
-            "splits": {  # V2
+            "splits": {
                 k: len(v) for k, v in self.state.get("splits", {}).items()
-            },
-            "tokenized": {  # V2
-                k: len(v) for k, v in self.state.get("tokenized_splits", {}).items()
             }
         }
 
@@ -1092,11 +1217,6 @@ Nguyên tắc trả lời:
         if self.state.get("splits"):
             summary["splits"] = {
                 k: len(v) for k, v in self.state["splits"].items()
-            }
-
-        if self.state.get("tokenized_splits"):
-            summary["tokenized"] = {
-                k: len(v) for k, v in self.state["tokenized_splits"].items()
             }
 
         return summary

@@ -269,6 +269,31 @@ body {
     color: var(--accent-red);
 }
 
+.stat-item.rescued .stat-value {
+    color: var(--accent-yellow);
+}
+
+/* Docs Extracted */
+.docs-extracted {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.docs-extracted span {
+    color: var(--accent-cyan);
+    font-weight: 600;
+}
+
+/* Progress Details */
+.progress-details {
+    display: flex;
+    gap: 24px;
+    margin-top: 8px;
+}
+
 /* Errors Card */
 .errors-card {
     grid-column: span 3;

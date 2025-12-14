@@ -10,10 +10,10 @@
     <div class="dashboard">
         <!-- Header -->
         <header class="header">
-            <h1>📊 Pipeline Dashboard</h1>
+            <h1>Pipeline Dashboard</h1>
             <div class="status" id="connection-status">
                 <span class="status-dot"></span>
-                <span class="status-text">Đang kết nối...</span>
+                <span class="status-text">Dang ket noi...</span>
             </div>
         </header>
 
@@ -22,7 +22,7 @@
             <!-- Current Step Card -->
             <div class="card step-card">
                 <div class="card-header">
-                    <h2>🎯 Bước hiện tại</h2>
+                    <h2>Buoc hien tai</h2>
                 </div>
                 <div class="card-body">
                     <div class="step-name" id="current-step">Idle</div>
@@ -33,7 +33,7 @@
             <!-- Progress Card -->
             <div class="card progress-card">
                 <div class="card-header">
-                    <h2>📈 Tiến độ</h2>
+                    <h2>Tien do</h2>
                 </div>
                 <div class="card-body">
                     <div class="progress-bar">
@@ -43,11 +43,16 @@
                         <span id="chunks-processed">0</span> / <span id="chunks-total">0</span>
                         (<span id="progress-percent">0</span>%)
                     </div>
-                    <div class="progress-rate">
-                        <span id="processing-rate">0</span> chunks/phút
+                    <div class="progress-details">
+                        <div class="progress-rate">
+                            <span id="processing-rate">0</span> chunks/phut
+                        </div>
+                        <div class="progress-eta">
+                            Con lai: <span id="estimated-remaining">N/A</span>
+                        </div>
                     </div>
-                    <div class="progress-eta">
-                        Còn lại: <span id="estimated-remaining">N/A</span>
+                    <div class="docs-extracted" id="docs-extracted-row" style="display: none;">
+                        Docs extracted: <span id="docs-extracted">0</span>
                     </div>
                 </div>
             </div>
@@ -55,17 +60,21 @@
             <!-- QA Stats Card -->
             <div class="card qa-card">
                 <div class="card-header">
-                    <h2>💬 Q&A Generated</h2>
+                    <h2>Q&A Generated</h2>
                 </div>
                 <div class="card-body">
                     <div class="stat-grid">
                         <div class="stat-item">
                             <span class="stat-value" id="qa-generated">0</span>
-                            <span class="stat-label">Tổng</span>
+                            <span class="stat-label">Tong</span>
                         </div>
                         <div class="stat-item good">
                             <span class="stat-value" id="qa-good">0</span>
                             <span class="stat-label">Good</span>
+                        </div>
+                        <div class="stat-item rescued">
+                            <span class="stat-value" id="qa-rescued">0</span>
+                            <span class="stat-label">Rescued</span>
                         </div>
                         <div class="stat-item bad">
                             <span class="stat-value" id="qa-bad">0</span>
@@ -73,7 +82,7 @@
                         </div>
                         <div class="stat-item">
                             <span class="stat-value" id="qa-good-rate">0%</span>
-                            <span class="stat-label">Tỷ lệ</span>
+                            <span class="stat-label">Ty le</span>
                         </div>
                     </div>
                 </div>
@@ -82,7 +91,7 @@
             <!-- Cache Stats Card -->
             <div class="card cache-card">
                 <div class="card-header">
-                    <h2>📦 Cache</h2>
+                    <h2>Cache</h2>
                 </div>
                 <div class="card-body">
                     <div class="stat-grid">
@@ -105,17 +114,17 @@
             <!-- Chunks Stats Card -->
             <div class="card chunks-card">
                 <div class="card-header">
-                    <h2>📄 Chunks</h2>
+                    <h2>Chunks</h2>
                 </div>
                 <div class="card-body">
                     <div class="stat-grid">
                         <div class="stat-item good">
                             <span class="stat-value" id="chunks-success">0</span>
-                            <span class="stat-label">Thành công</span>
+                            <span class="stat-label">Thanh cong</span>
                         </div>
                         <div class="stat-item bad">
                             <span class="stat-value" id="chunks-failed">0</span>
-                            <span class="stat-label">Thất bại</span>
+                            <span class="stat-label">That bai</span>
                         </div>
                     </div>
                 </div>
@@ -124,12 +133,12 @@
             <!-- Errors Card -->
             <div class="card errors-card">
                 <div class="card-header">
-                    <h2>⚠️ Lỗi gần đây</h2>
+                    <h2>Loi gan day</h2>
                     <span class="error-count" id="error-count">0</span>
                 </div>
                 <div class="card-body">
                     <div class="error-list" id="error-list">
-                        <div class="no-errors">Không có lỗi</div>
+                        <div class="no-errors">Khong co loi</div>
                     </div>
                 </div>
             </div>
@@ -138,7 +147,7 @@
         <!-- Footer -->
         <footer class="footer">
             <div class="footer-info">
-                Cập nhật mỗi giây • 
+                Cap nhat moi giay -
                 <span id="last-update">--:--:--</span>
             </div>
         </footer>

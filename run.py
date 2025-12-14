@@ -20,6 +20,7 @@ Additional options:
 import argparse
 import sys
 import os
+import shutil
 
 # Add current dir to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -107,8 +108,31 @@ Pipeline Steps (auto-skip if completed):
             result = pipeline.run(steps=[args.step])
 
         elif args.force:
-            # Force run from scratch
+            # Force run from scratch - xóa sạch data cũ
             print("Force running pipeline from scratch...")
+            print("Cleaning old data and cache...")
+            
+            output_dir = pipeline.config.get("general.output_dir", "./output")
+            cache_dir = pipeline.config.get("processing.cache.cache_dir", "./cache")
+            
+            # Xóa output
+            if os.path.exists(output_dir):
+                for subdir in ["extracted", "generated", "evaluated", "split", "final"]:
+                    subpath = os.path.join(output_dir, subdir)
+                    if os.path.exists(subpath):
+                        shutil.rmtree(subpath)
+                        os.makedirs(subpath, exist_ok=True)
+                # Xóa pipeline_state.json
+                state_file = os.path.join(output_dir, "pipeline_state.json")
+                if os.path.exists(state_file):
+                    os.remove(state_file)
+            
+            # Xóa cache
+            if os.path.exists(cache_dir):
+                shutil.rmtree(cache_dir)
+                os.makedirs(cache_dir, exist_ok=True)
+            
+            print("Done! Starting fresh pipeline...")
             result = pipeline.run()
 
         else:

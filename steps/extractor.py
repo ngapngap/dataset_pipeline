@@ -4,6 +4,8 @@ Text Extractor - Trích xuất text từ các file tài liệu
 """
 
 import os
+import json
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -52,6 +54,11 @@ class TextExtractor:
             return []
         
         documents = []
+        processed = 0
+        total_files = len(files)
+        
+        # Ghi live status ban đầu
+        self._save_live_status("extract", 0, total_files, 0)
         
         # Xử lý tuần tự nếu số file ít
         if len(files) <= 5:
@@ -59,6 +66,9 @@ class TextExtractor:
                 doc = self._extract_file(file_path)
                 if doc:
                     documents.append(doc)
+                processed += 1
+                # Cập nhật live status mỗi file
+                self._save_live_status("extract", processed, total_files, len(documents))
         else:
             # Xử lý song song với nhiều file
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -68,6 +78,10 @@ class TextExtractor:
                     doc = future.result()
                     if doc:
                         documents.append(doc)
+                    processed += 1
+                    # Cập nhật live status mỗi 2 files
+                    if processed % 2 == 0:
+                        self._save_live_status("extract", processed, total_files, len(documents))
         
         # Lưu kết quả
         output_file = os.path.join(self.output_dir, "extracted_documents.json")
@@ -119,12 +133,16 @@ class TextExtractor:
                 return None
             
             if content and content.strip():
+                # Trích xuất metadata từ 3000 ký tự đầu
+                metadata = self._extract_metadata(content)
+                
                 return {
                     "file_name": file_path.name,
                     "file_path": str(file_path),
                     "content": content.strip(),
                     "char_count": len(content),
-                    "word_count": len(content.split())
+                    "word_count": len(content.split()),
+                    "metadata": metadata
                 }
             else:
                 logger.warning(f"File rỗng: {file_path.name}")
@@ -216,3 +234,130 @@ class TextExtractor:
         if os.path.exists(output_file):
             return load_json(output_file)
         return []
+    
+    def _extract_metadata(self, content: str) -> Dict[str, Any]:
+        """
+        Trích xuất metadata từ 3000 ký tự đầu của văn bản:
+        - Số hiệu văn bản
+        - Ngày ban hành
+        - Cơ quan ban hành
+        - Loại văn bản
+        - Tên văn bản
+        """
+        import re
+        from datetime import datetime
+        
+        # Chỉ tìm trong 3000 ký tự đầu (phần header)
+        header = content[:3000] if len(content) > 3000 else content
+        header_normalized = re.sub(r'\s+', ' ', header)
+        
+        metadata = {
+            "doc_number": None,
+            "doc_number_short": None,
+            "doc_type": None,
+            "issued_date": None,
+            "issued_by": None,
+            "title": None
+        }
+        
+        # ========== TRÍCH XUẤT SỐ HIỆU VĂN BẢN ==========
+        patterns = [
+            (r'Luật\s+số:\s*(\d+/\d{4}/QH\d+)', 'Luật số'),
+            (r'Số:\s*(\d+/\d{4}/NĐ\s*-?\s*CP)', 'Nghị định số'),
+            (r'Số:\s*(\d+/\d{4}/NĐ)', 'Nghị định số'),
+            (r'Số:\s*(\d+/\d{4}/TT\s*-?\s*[A-Z]+)', 'Thông tư số'),
+            (r'Số:\s*(\d+/QĐ\s*-?\s*[A-Z]+)', 'Quyết định số'),
+            (r'Số:\s*(\d+/\d{4}/QH\d+)', 'Nghị quyết số'),
+            (r'Số:\s*(\d+/[A-Z]+\s*-?\s*[A-Z]+)', 'Công văn số'),
+        ]
+        
+        for pattern, doc_type in patterns:
+            match = re.search(pattern, header_normalized, re.IGNORECASE)
+            if match:
+                doc_num = match.group(1)
+                doc_num = re.sub(r'\s+', '', doc_num)
+                # Fix: Nếu là NĐ nhưng thiếu -CP thì thêm vào
+                if doc_type == 'Nghị định số' and 'NĐ' in doc_num and '-CP' not in doc_num:
+                    doc_num = doc_num.replace('NĐ', 'NĐ-CP')
+                
+                metadata["doc_number"] = f"{doc_type} {doc_num}"
+                metadata["doc_number_short"] = doc_num
+                metadata["doc_type"] = doc_type
+                break
+        
+        # ========== TRÍCH XUẤT NGÀY BAN HÀNH ==========
+        date_patterns = [
+            r'Hà Nội,?\s*ngày\s+(\d+)\s+tháng\s+(\d+)\s+năm\s+(\d{4})',
+            r'ngày\s+(\d+)\s+tháng\s+(\d+)\s+năm\s+(\d{4})',
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, header_normalized, re.IGNORECASE)
+            if match:
+                day, month, year = match.groups()
+                try:
+                    # Validate date
+                    datetime(int(year), int(month), int(day))
+                    metadata["issued_date"] = f"{day.zfill(2)}/{month.zfill(2)}/{year}"
+                    break
+                except ValueError:
+                    continue
+        
+        # ========== TRÍCH XUẤT CƠ QUAN BAN HÀNH ==========
+        issued_by_patterns = [
+            (r'Chính phủ\s+ban hành', 'Chính phủ'),
+            (r'Quốc hội\s+ban hành', 'Quốc hội'),
+            (r'Bộ trưởng\s+Bộ\s+([A-Za-z\s-]+)\s+ban hành', lambda m: f"Bộ {m.group(1).strip()}"),
+            (r'Giám đốc\s+([A-Za-z\s-]+)\s+ban hành', lambda m: f"Giám đốc {m.group(1).strip()}"),
+            (r'Bộ\s+([A-Za-z\s-]+)\s+ban hành', lambda m: f"Bộ {m.group(1).strip()}"),
+        ]
+        
+        for pattern, formatter in issued_by_patterns:
+            match = re.search(pattern, header_normalized, re.IGNORECASE)
+            if match:
+                if callable(formatter):
+                    metadata["issued_by"] = formatter(match)
+                else:
+                    metadata["issued_by"] = formatter
+                break
+        
+        # ========== TRÍCH XUẤT TÊN VĂN BẢN ==========
+        # Tìm dòng sau "NGHỊ ĐỊNH", "THÔNG TƯ", "LUẬT", "QUYẾT ĐỊNH"
+        doc_type_keywords = ['NGHỊ ĐỊNH', 'THÔNG TƯ', 'LUẬT', 'QUYẾT ĐỊNH']
+        lines = header.split('\n')
+        
+        for i, line in enumerate(lines):
+            line_upper = line.upper().strip()
+            if any(keyword in line_upper for keyword in doc_type_keywords):
+                # Lấy dòng tiếp theo làm tên văn bản
+                if i + 1 < len(lines):
+                    title = lines[i + 1].strip()
+                    if title and len(title) > 10:  # Bỏ qua dòng quá ngắn
+                        metadata["title"] = title[:200]  # Giới hạn 200 ký tự
+                        break
+        
+        return metadata
+    
+    def _save_live_status(self, step: str, processed: int, total: int, docs_count: int):
+        """Ghi file live status cho Dashboard real-time"""
+        try:
+            # Ghi vào thư mục cha của output_dir (thường là ./output/)
+            parent_dir = os.path.dirname(self.output_dir)
+            status_file = os.path.join(parent_dir, "live_status.json")
+            
+            status = {
+                "step": step,
+                "chunks_processed": processed,
+                "chunks_total": total,
+                "qa_generated": 0,
+                "docs_extracted": docs_count,
+                "cache_hits": 0,
+                "cache_misses": 0,
+                "failed_chunks": 0,
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            with open(status_file, 'w', encoding='utf-8') as f:
+                json.dump(status, f, ensure_ascii=False)
+        except Exception:
+            pass  # Không để lỗi ảnh hưởng pipeline

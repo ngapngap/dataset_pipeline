@@ -15,8 +15,21 @@ Hệ thống được thiết kế chuyên biệt để xử lý các văn bản
     - Đánh giá chất lượng Q&A dựa trên tiêu chí pháp lý (số hiệu, điều khoản).
     - Tự động sửa chữa (Rescue) các câu hỏi thiếu trích dẫn nếu có thể.
     - Tự động sinh lại (Regenerate) các đoạn văn bản có chất lượng Q&A thấp.
+- **Phân tích Dataset tự động (DatasetAnalyzer)**: Báo cáo chi tiết về thống kê, format issues, near-duplicates và health score.
 - **Smart Caching**: Lưu cache API response để tiết kiệm chi phí và thời gian khi chạy lại.
 - **Hiệu năng cao**: Hỗ trợ đa luồng (Multi-threading) và xử lý song song nhiều API key.
+
+## 📊 Thống kê Dataset hiện tại
+
+| Metric | Số lượng |
+|--------|----------|
+| **Good Q&A** | 5,666 |
+| **Train** | 3,959 samples (24 docs) |
+| **Validation** | 905 samples (5 docs) |
+| **Test** | 802 samples (6 docs) |
+| **Documents** | 35 văn bản pháp luật |
+| **Good Rate** | 79.1% |
+| **Health Score** | 73.1/100 |
 
 ## 🛠 Yêu cầu hệ thống
 
@@ -63,7 +76,7 @@ llm:
       model: "gemini-2.0-flash"
       api_keys_file: "../gemini_keys.txt" # File chứa danh sách key, mỗi key 1 dòng
       threads_per_key: 5 # Số luồng chạy song song cho mỗi key
-    
+
     ollama: # Chạy model local
       base_url: "http://localhost:11434/v1"
       model: "vistral"
@@ -103,7 +116,7 @@ python run.py --retry-failed
 python run.py -c custom_config.yaml
 ```
 
-### 3. Giám sát qua Dashboard (Mới)
+### 3. Giám sát qua Dashboard
 Mở terminal mới và chạy:
 ```bash
 python run_dashboard.py
@@ -112,17 +125,6 @@ Truy cập **http://localhost:8000** để xem:
 - Tiến độ real-time của các bước.
 - Log chi tiết.
 - Biểu đồ thống kê chất lượng dataset.
-
-### 4. Kiểm tra chất lượng Dataset
-Sau khi pipeline chạy xong, chạy script kiểm tra:
-```bash
-python check_dataset_quality.py
-```
-Script này sẽ báo cáo chi tiết về:
-- Số lượng câu trùng lặp.
-- Độ dài trung bình câu hỏi/câu trả lời.
-- Tỷ lệ câu trả lời có trích dẫn pháp lý (Điều/Khoản/Số hiệu văn bản).
-- Phân phối câu hỏi theo văn bản nguồn.
 
 ## 🔄 Quy trình hoạt động (5 Steps)
 
@@ -141,7 +143,7 @@ Script này sẽ báo cáo chi tiết về:
 |       |          +-- Deduplicate (Loại bỏ trùng lặp)       |
 |       |          +-- Evaluate (Chấm điểm pháp lý)          |
 |       |          +-- Rescue (Thêm trích dẫn còn thiếu)     |
-|       |          +-- Regenerate (Sinh lại chunks kém)      |
+|       |          +-- Analyze (Báo cáo chất lượng)          |
 |       v                                                     |
 |  4. SPLIT        Chia tập Train/Val/Test theo DOCUMENT     |
 |       |          (Tránh Data Leakage tuyệt đối)            |
@@ -160,26 +162,72 @@ dataset_pipeline_v2/
 ├── run_dashboard.py          # Script chạy Dashboard web
 ├── requirements.txt          # Danh sách thư viện
 ├── pipeline.py               # Class chính điều phối pipeline
-├── pipeline_v2.py            # (Legacy) Version cũ
 │
 ├── core/                     # Các module cốt lõi (Config, Logger, Utils)
 ├── dashboard/                # Mã nguồn Web Dashboard
 ├── providers/                # Modules kết nối LLM (OpenAI, Gemini, Custom...)
 ├── steps/                    # Logic từng bước (Extractor, Generator, Evaluator...)
+│   ├── extractor.py          # Trích xuất văn bản từ PDF/DOCX
+│   ├── generator.py          # Sinh Q&A bằng LLM
+│   ├── evaluator.py          # Đánh giá chất lượng + DatasetAnalyzer
+│   ├── rescuer.py            # Cứu hộ Q&A thiếu trích dẫn
+│   ├── splitter.py           # Chia train/val/test theo document
+│   └── exporter.py           # Xuất ChatML format
 ├── legal_knowledge/          # Dữ liệu tri thức pháp luật bổ trợ
 │
-├── data/                     # Dữ liệu trung gian
-│   ├── generated/            # Kết quả thô từ LLM
-│   └── evaluated/            # Kết quả sau khi đánh giá
+├── data/                     # Dữ liệu đầu vào
+│   └── raw/                  # File PDF/DOCX gốc
 │
 ├── output/                   # Kết quả đầu ra
 │   ├── extracted/            # Text đã trích xuất
 │   ├── generated/            # File Q&A thô
-│   ├── evaluated/            # File Q&A đã lọc (good/bad/duplicates)
+│   ├── evaluated/            # File Q&A đã lọc
+│   │   ├── qa_good.json      # Q&A đạt chuẩn
+│   │   ├── qa_bad.json       # Q&A cần cải thiện
+│   │   ├── qa_rescued.json   # Q&A đã cứu hộ
+│   │   ├── evaluation_report.json  # Báo cáo phân tích
+│   │   └── qa_near_duplicates.json # Các cặp gần trùng
 │   ├── split/                # File đã chia tập train/test/val
+│   │   ├── train.jsonl
+│   │   ├── validation.jsonl
+│   │   └── test.jsonl
 │   └── final/                # Dataset cuối cùng (ChatML format)
 │
+├── cache/                    # Cache API responses
 └── logs/                     # File log hệ thống
+```
+
+## 📈 Báo cáo phân tích tự động
+
+Sau mỗi lần chạy step `evaluate`, hệ thống tự động tạo báo cáo phân tích:
+
+### evaluation_report.json
+```json
+{
+  "total_samples": 7228,
+  "good_samples": 5670,
+  "bad_samples": 1558,
+  "statistics": {
+    "by_source": {"595_QD_BHXH.pdf": 939, ...},
+    "by_score": {"10": 4129, "9": 599, ...},
+    "question_length": {"min": 20, "max": 420, "avg": 106},
+    "answer_length": {"min": 61, "max": 1662, "avg": 295},
+    "has_legal_citation": 5560,
+    "has_document_number": 4534
+  },
+  "format_issues": {
+    "truncated": 73,
+    "missing_punctuation": 7
+  },
+  "near_duplicates": {
+    "count": 46,
+    "threshold": 0.8
+  },
+  "quality_summary": {
+    "high_quality": 5285,
+    "health_score": 73.1
+  }
+}
 ```
 
 ## ❓ FAQ (Câu hỏi thường gặp)
@@ -194,7 +242,27 @@ A: Việc tokenize phụ thuộc vào model cụ thể bạn định fine-tune. 
 A: Khai báo trong `config.yaml` phần `providers` với loại `custom` hoặc `openai`. Chỉ cần điền đúng `base_url` và `api_key`.
 
 **Q: Tôi muốn kiểm tra các câu hỏi bị loại bỏ (Bad Q&A)?**
-A: Kiểm tra file `output/evaluated/qa_bad.json`. Bạn cũng có thể dùng script `check_bad_samples.py` để xem nhanh 20 mẫu đầu tiên.
+A: Kiểm tra file `output/evaluated/qa_bad.json`. File `output/evaluated/evaluation_report.json` có đầy đủ thống kê.
+
+**Q: Rescue là gì?**
+A: Rescue là cơ chế tự động sửa các câu trả lời thiếu số hiệu văn bản. Ví dụ: `"Căn cứ Điều 5 Thông tư này"` → `"Căn cứ Điều 5 Thông tư số 25/2025/TT-BYT"`.
+
+**Q: Health Score được tính như thế nào?**
+A: Health Score = (High quality samples × 1.0 + Medium quality × 0.7) / Total × 100. Score >= 80 là tốt, >= 60 là cần cải thiện, < 60 là cần xử lý.
+
+## 📜 Changelog
+
+### v2.1.0 (2025-12-14)
+- **Thêm DatasetAnalyzer**: Tự động phân tích thống kê, format issues, near-duplicates
+- **Cải thiện Rescuer**: Thêm 25+ patterns mới để rescue nhiều samples hơn
+- **Thêm evaluation_report.json**: Báo cáo chi tiết chất lượng dataset
+- **Thêm near-duplicate detection**: Jaccard similarity-based detection
+- **Loại bỏ câu hỏi chung chung**: Tự động loại các câu như "Thông tư này có hiệu lực từ ngày nào?"
+
+### v2.0.0
+- Auto Mode, ChatML format, Document-based Split
+- Deduplication, Evaluation, Rescue mechanism
+- Multi-provider support (Gemini, OpenAI, Claude, Ollama)
 
 ## 📜 License
 

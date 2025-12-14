@@ -19,9 +19,12 @@ class Dashboard {
             progressPercent: document.getElementById('progress-percent'),
             processingRate: document.getElementById('processing-rate'),
             estimatedRemaining: document.getElementById('estimated-remaining'),
+            docsExtracted: document.getElementById('docs-extracted'),
+            docsExtractedRow: document.getElementById('docs-extracted-row'),
             qaGenerated: document.getElementById('qa-generated'),
             qaGood: document.getElementById('qa-good'),
             qaBad: document.getElementById('qa-bad'),
+            qaRescued: document.getElementById('qa-rescued'),
             qaGoodRate: document.getElementById('qa-good-rate'),
             cacheHits: document.getElementById('cache-hits'),
             cacheMisses: document.getElementById('cache-misses'),
@@ -110,7 +113,7 @@ class Dashboard {
         // Current step
         this.elements.currentStep.textContent = this.formatStepName(data.current_step);
         this.elements.elapsedTime.textContent = data.elapsed_formatted || '--:--';
-        
+
         // Progress
         if (data.chunks) {
             const chunks = data.chunks;
@@ -118,50 +121,63 @@ class Dashboard {
             this.elements.chunksTotal.textContent = chunks.total;
             this.elements.progressPercent.textContent = chunks.progress_percent.toFixed(1);
             this.elements.progressFill.style.width = `${chunks.progress_percent}%`;
-            this.elements.chunksSuccess.textContent = chunks.success;
+            this.elements.chunksSuccess.textContent = chunks.success || chunks.processed;
             this.elements.chunksFailed.textContent = chunks.failed;
         }
-        
+
+        // Docs extracted
+        if (data.docs_extracted !== undefined && data.docs_extracted > 0) {
+            this.elements.docsExtractedRow.style.display = 'block';
+            this.elements.docsExtracted.textContent = data.docs_extracted;
+        } else {
+            this.elements.docsExtractedRow.style.display = 'none';
+        }
+
         // Performance
         if (data.performance) {
             this.elements.processingRate.textContent = data.performance.processing_rate.toFixed(1);
             this.elements.estimatedRemaining.textContent = data.performance.estimated_remaining;
         }
-        
+
         // QA Stats
         if (data.qa) {
             this.elements.qaGenerated.textContent = data.qa.generated;
             this.elements.qaGood.textContent = data.qa.good;
             this.elements.qaBad.textContent = data.qa.bad;
+            this.elements.qaRescued.textContent = data.qa.rescued || 0;
             this.elements.qaGoodRate.textContent = data.qa.good_rate.toFixed(1) + '%';
         }
-        
+
         // Cache Stats
         if (data.cache) {
             this.elements.cacheHits.textContent = data.cache.hits;
             this.elements.cacheMisses.textContent = data.cache.misses;
             this.elements.cacheHitRate.textContent = data.cache.hit_rate.toFixed(1) + '%';
         }
-        
+
         // Errors
         if (data.errors) {
             this.elements.errorCount.textContent = data.errors.count;
             this.updateErrorList(data.errors.recent);
         }
-        
+
         // Last update
         this.elements.lastUpdate.textContent = new Date().toLocaleTimeString();
     }
     
     formatStepName(step) {
         const stepNames = {
-            'idle': 'Chờ',
-            'extract': 'Trích xuất',
-            'generate': 'Sinh Q&A',
-            'evaluate': 'Đánh giá',
-            'split': 'Chia dataset',
-            'export': 'Xuất file',
-            'completed': 'Hoàn thành'
+            'idle': 'Cho khoi dong',
+            'extract': 'Dang trich xuat...',
+            'extract_done': 'Trich xuat xong',
+            'generate': 'Dang sinh Q&A...',
+            'generate_done': 'Sinh Q&A xong',
+            'evaluate': 'Dang danh gia...',
+            'evaluate_done': 'Danh gia xong',
+            'split': 'Dang chia dataset...',
+            'split_done': 'Chia dataset xong',
+            'export': 'Dang xuat file...',
+            'completed': 'HOAN THANH!'
         };
         return stepNames[step] || step;
     }

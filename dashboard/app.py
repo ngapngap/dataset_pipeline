@@ -21,16 +21,16 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 
-from .metrics import MetricsCollector, get_metrics_collector
+from .file_metrics import FileMetricsReader, get_file_metrics
 from .websocket import ConnectionManager
 
 
-def create_app(metrics: Optional[MetricsCollector] = None) -> FastAPI:
+def create_app(output_dir: str = "./output") -> FastAPI:
     """
     Create FastAPI application
     
     Args:
-        metrics: MetricsCollector instance (uses global if None)
+        output_dir: Output directory của pipeline để đọc metrics
         
     Returns:
         FastAPI app instance
@@ -41,8 +41,8 @@ def create_app(metrics: Optional[MetricsCollector] = None) -> FastAPI:
         version="1.0.0"
     )
     
-    # Use provided metrics or global
-    app.state.metrics = metrics or get_metrics_collector()
+    # Dùng FileMetricsReader để đọc từ files (hỗ trợ multi-process)
+    app.state.metrics = get_file_metrics(output_dir)
     
     # WebSocket manager
     app.state.ws_manager = ConnectionManager()
@@ -127,13 +127,9 @@ def create_app(metrics: Optional[MetricsCollector] = None) -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """On application startup"""
-        # Register metrics callback for broadcast
-        def broadcast_update(stats):
-            asyncio.create_task(
-                app.state.ws_manager.broadcast(stats)
-            )
-        
-        app.state.metrics.add_update_callback(broadcast_update)
+        # File-based metrics không cần callback
+        # WebSocket sẽ poll files mỗi giây
+        pass
     
     @app.on_event("shutdown")
     async def shutdown_event():

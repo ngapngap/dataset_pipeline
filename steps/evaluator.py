@@ -233,14 +233,21 @@ class QualityEvaluator:
         reasons = []
         
         # ========== KIỂM TRA SỐ HIỆU VĂN BẢN (BẮT BUỘC - QUAN TRỌNG NHẤT) ==========
-        # Pattern số hiệu văn bản: XX/YYYY/XX-XX hoặc XX-XXXX
+        # Pattern số hiệu văn bản: XX/YYYY/XX-XX hoặc XXXX/QĐ-XX (Quyết định không có năm)
         # CHỈ match số hiệu chính thức, KHÔNG match "năm 2025" chung chung
         document_number_patterns = [
-            r'\d+/\d{4}/[A-Za-zĐ]+[-/]?[A-Za-z]*',  # 41/2024/QH15, 25/2025/TT-BYT
+            r'\d+/\d{4}/[A-Za-zĐ]+[-/]?[A-Za-z]*',  # 41/2024/QH15, 25/2025/TT-BYT, 143/2018/NĐ-CP
             r'\d+/\d{4}/NĐ-CP',                       # Nghị định
             r'\d+/\d{4}/TT-[A-Z]+',                   # Thông tư
             r'\d+/\d{4}/QH\d+',                       # Luật
+            r'\d+/QĐ-[A-Z]+',                         # Quyết định (2222/QĐ-BHXH - không có năm)
+            r'\d+/QĐ\s*-\s*[A-Z]+',                  # Quyết định có khoảng trắng
             r'số\s+\d+/\d{4}',                        # "số 41/2024"
+            r'số\s+\d+/QĐ[-A-Z]*',                    # "số 2222/QĐ" hoặc "số 2222/QĐ-BHXH"
+            r'Quyết định\s+số\s+\d+/QĐ[-A-Z]*',      # "Quyết định số 2222/QĐ-BHXH"
+            r'Nghị định\s+số\s+\d+/\d{4}/NĐ-CP',     # "Nghị định số 143/2018/NĐ-CP"
+            r'Thông tư\s+số\s+\d+/\d{4}/TT-[A-Z]+',  # "Thông tư số 25/2025/TT-BYT"
+            r'Luật\s+số\s+\d+/\d{4}/QH\d+',          # "Luật số 41/2024/QH15"
             # XÓA: r'năm\s+\d{4}' - quá rộng, match cả "năm 2025" trong nội dung
         ]
         
@@ -555,14 +562,14 @@ class QualityEvaluator:
         # Good Q&A
         good_json = os.path.join(self.output_dir, "qa_good.json")
         save_json(self._good, good_json)
-        
+
         good_jsonl = os.path.join(self.output_dir, "qa_good.jsonl")
         save_jsonl(self._good, good_jsonl)
-        
+
         # Bad Q&A
         bad_json = os.path.join(self.output_dir, "qa_bad.json")
         save_json(self._bad, bad_json)
-        
+
         # Stats
         stats = {
             "total": len(self._good) + len(self._bad),
@@ -572,15 +579,324 @@ class QualityEvaluator:
             "min_score_threshold": self.min_score,
             "evaluation_mode": self.mode
         }
-        
+
         stats_file = os.path.join(self.output_dir, "evaluation_stats.json")
         save_json(stats, stats_file)
-        
+
         logger.info(f"Đã lưu: {len(self._good)} good -> {good_json}")
         logger.info(f"Good rate: {stats['good_rate']:.1f}%")
+
+        # Chạy phân tích dataset
+        try:
+            analyzer = DatasetAnalyzer(self.output_dir)
+            analyzer.analyze(self._good, self._bad)
+        except Exception as e:
+            logger.warning(f"Không thể chạy phân tích dataset: {e}")
     
     def load_evaluated(self) -> Tuple[List[Dict], List[Dict]]:
         """Load kết quả đã evaluate"""
         good = load_json(os.path.join(self.output_dir, "qa_good.json"))
         bad = load_json(os.path.join(self.output_dir, "qa_bad.json"))
         return good or [], bad or []
+
+
+class DatasetAnalyzer:
+    """
+    Phân tích và báo cáo chất lượng dataset.
+    Tích hợp vào evaluate step để tự động phân tích sau khi đánh giá.
+    """
+
+    def __init__(self, output_dir: str):
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+    def analyze(self, good_qa: List[Dict], bad_qa: List[Dict]) -> Dict:
+        """
+        Chạy tất cả phân tích và trả về report.
+
+        Args:
+            good_qa: List Q&A đã pass evaluation
+            bad_qa: List Q&A đã fail evaluation
+
+        Returns:
+            Report dict với đầy đủ thống kê
+        """
+        import re
+        from datetime import datetime
+        from collections import Counter
+
+        all_qa = good_qa + bad_qa
+        total = len(all_qa)
+
+        if total == 0:
+            return {"error": "No data to analyze"}
+
+        logger.info(f"Phân tích {total} Q&A pairs...")
+
+        report = {
+            "timestamp": datetime.now().isoformat(),
+            "total_samples": total,
+            "good_samples": len(good_qa),
+            "bad_samples": len(bad_qa),
+            "statistics": self._analyze_statistics(all_qa),
+            "format_issues": self._detect_format_issues(all_qa),
+            "near_duplicates": self._detect_near_duplicates(all_qa),
+            "quality_summary": self._summarize_quality(good_qa, bad_qa)
+        }
+
+        # Lưu report
+        self._save_report(report)
+
+        # Log summary
+        self._log_summary(report)
+
+        return report
+
+    def _analyze_statistics(self, qa_pairs: List[Dict]) -> Dict:
+        """Phân tích thống kê phân bố dataset"""
+        from collections import Counter
+
+        # Phân bố theo source_doc
+        source_counts = Counter(qa.get("source_doc", "Unknown") for qa in qa_pairs)
+
+        # Phân bố theo eval_score
+        score_counts = Counter(int(qa.get("eval_score", 0)) for qa in qa_pairs)
+
+        # Thống kê độ dài
+        q_lengths = [len(qa.get("question", "")) for qa in qa_pairs]
+        a_lengths = [len(qa.get("answer", "")) for qa in qa_pairs]
+
+        # Đếm samples có trích dẫn pháp lý
+        import re
+        legal_pattern = r'(Điều|Khoản|Điểm)\s+\d+'
+        doc_pattern = r'\d+/\d{4}/[A-Za-zĐ]+'
+
+        has_legal = sum(1 for qa in qa_pairs
+                       if re.search(legal_pattern, qa.get("answer", ""), re.IGNORECASE))
+        has_doc_number = sum(1 for qa in qa_pairs
+                            if re.search(doc_pattern, qa.get("answer", "")))
+
+        return {
+            "by_source": dict(source_counts.most_common(20)),
+            "by_score": {str(k): v for k, v in sorted(score_counts.items(), reverse=True)},
+            "question_length": {
+                "min": min(q_lengths) if q_lengths else 0,
+                "max": max(q_lengths) if q_lengths else 0,
+                "avg": sum(q_lengths) / len(q_lengths) if q_lengths else 0
+            },
+            "answer_length": {
+                "min": min(a_lengths) if a_lengths else 0,
+                "max": max(a_lengths) if a_lengths else 0,
+                "avg": sum(a_lengths) / len(a_lengths) if a_lengths else 0
+            },
+            "has_legal_citation": has_legal,
+            "has_document_number": has_doc_number
+        }
+
+    def _detect_format_issues(self, qa_pairs: List[Dict]) -> Dict:
+        """Phát hiện các lỗi format trong dataset"""
+        import re
+
+        issues = {
+            "empty_question": [],
+            "empty_answer": [],
+            "truncated": [],
+            "encoding_issues": [],
+            "too_short": [],
+            "too_long": [],
+            "missing_punctuation": []
+        }
+
+        encoding_pattern = r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|�'
+
+        for i, qa in enumerate(qa_pairs):
+            idx = f"{qa.get('source_doc', 'unknown')}:{i}"
+            q = qa.get("question", "")
+            a = qa.get("answer", "")
+
+            # Empty fields
+            if not q.strip():
+                issues["empty_question"].append(idx)
+            if not a.strip():
+                issues["empty_answer"].append(idx)
+
+            # Truncated (không kết thúc bằng dấu câu)
+            if a and not re.search(r'[.!?。]$', a.strip()):
+                issues["truncated"].append({
+                    "idx": idx,
+                    "ending": a[-50:] if len(a) > 50 else a
+                })
+
+            # Encoding issues
+            if re.search(encoding_pattern, q + a):
+                issues["encoding_issues"].append(idx)
+
+            # Too short/long
+            if a and len(a.strip()) < 30:
+                issues["too_short"].append({
+                    "idx": idx,
+                    "length": len(a),
+                    "preview": a[:100]
+                })
+            if a and len(a.strip()) > 2000:
+                issues["too_long"].append({
+                    "idx": idx,
+                    "length": len(a)
+                })
+
+            # Missing question mark
+            if q and not q.strip().endswith("?"):
+                issues["missing_punctuation"].append(idx)
+
+        # Convert to counts for summary (keep full list in separate file)
+        issues_summary = {k: len(v) for k, v in issues.items()}
+
+        # Lưu chi tiết issues ra file riêng nếu có nhiều
+        total_issues = sum(issues_summary.values())
+        if total_issues > 0:
+            issues_file = os.path.join(self.output_dir, "format_issues_detail.json")
+            save_json(issues, issues_file)
+            logger.info(f"Chi tiết format issues -> {issues_file}")
+
+        return issues_summary
+
+    def _detect_near_duplicates(self, qa_pairs: List[Dict]) -> Dict:
+        """Phát hiện near-duplicate bằng n-gram similarity"""
+
+        def get_ngrams(text: str, n: int = 3) -> set:
+            """Tính character n-grams"""
+            text = text.lower().strip()
+            return set(text[i:i+n] for i in range(max(0, len(text) - n + 1)))
+
+        def jaccard_similarity(set1: set, set2: set) -> float:
+            """Tính Jaccard similarity"""
+            if not set1 or not set2:
+                return 0.0
+            intersection = len(set1 & set2)
+            union = len(set1 | set2)
+            return intersection / union if union > 0 else 0.0
+
+        # Giới hạn số samples để tránh O(n^2) quá lớn
+        max_samples = min(2000, len(qa_pairs))
+        sample_pairs = qa_pairs[:max_samples]
+
+        # Tính n-grams cho tất cả questions
+        q_ngrams = [(i, qa, get_ngrams(qa.get("question", "")))
+                    for i, qa in enumerate(sample_pairs)]
+
+        near_dups = []
+        threshold = 0.8
+
+        logger.info(f"Đang tìm near-duplicates trong {len(sample_pairs)} samples...")
+
+        # So sánh từng cặp (chỉ so sánh với 100 samples gần nhất để tăng tốc)
+        for i in range(len(q_ngrams)):
+            for j in range(i + 1, min(i + 100, len(q_ngrams))):
+                sim = jaccard_similarity(q_ngrams[i][2], q_ngrams[j][2])
+                if threshold <= sim < 1.0:  # Similar but not exact
+                    near_dups.append({
+                        "idx1": f"{q_ngrams[i][1].get('source_doc', '')}:{i}",
+                        "idx2": f"{q_ngrams[j][1].get('source_doc', '')}:{j}",
+                        "similarity": round(sim, 3),
+                        "q1": q_ngrams[i][1].get("question", "")[:80],
+                        "q2": q_ngrams[j][1].get("question", "")[:80]
+                    })
+
+        # Lưu chi tiết near-duplicates
+        if near_dups:
+            dup_file = os.path.join(self.output_dir, "qa_near_duplicates.json")
+            save_json(near_dups, dup_file)
+            logger.info(f"Tìm thấy {len(near_dups)} near-duplicates -> {dup_file}")
+
+        return {
+            "count": len(near_dups),
+            "threshold": threshold,
+            "samples_checked": len(sample_pairs),
+            "pairs": near_dups[:20]  # Chỉ lưu 20 cặp đầu trong report chính
+        }
+
+    def _summarize_quality(self, good_qa: List[Dict], bad_qa: List[Dict]) -> Dict:
+        """Tổng hợp chất lượng dataset"""
+        total = len(good_qa) + len(bad_qa)
+        if total == 0:
+            return {"error": "No data"}
+
+        # Phân loại theo score
+        high_quality = sum(1 for qa in good_qa if qa.get("eval_score", 0) >= 8)
+        medium_quality = sum(1 for qa in good_qa if 7 <= qa.get("eval_score", 0) < 8)
+        low_quality = len(bad_qa)
+
+        # Tính health score
+        # Công thức: (high*1.0 + medium*0.7) / total * 100
+        health_score = (high_quality * 1.0 + medium_quality * 0.7) / total * 100
+
+        # Phân bố eval_reason
+        from collections import Counter
+        all_qa = good_qa + bad_qa
+        reason_counts = Counter(qa.get("eval_reason", "N/A") for qa in all_qa)
+
+        return {
+            "high_quality": high_quality,
+            "medium_quality": medium_quality,
+            "low_quality": low_quality,
+            "good_rate": len(good_qa) / total * 100 if total > 0 else 0,
+            "health_score": round(health_score, 1),
+            "top_reasons": dict(reason_counts.most_common(10))
+        }
+
+    def _save_report(self, report: Dict):
+        """Lưu báo cáo phân tích"""
+        report_file = os.path.join(self.output_dir, "evaluation_report.json")
+        save_json(report, report_file)
+        logger.info(f"Đã lưu báo cáo phân tích -> {report_file}")
+
+    def _log_summary(self, report: Dict):
+        """Log tóm tắt báo cáo"""
+        logger.info("\n" + "="*60)
+        logger.info("📊 BÁO CÁO PHÂN TÍCH DATASET")
+        logger.info("="*60)
+
+        # Tổng quan
+        logger.info(f"\n📈 Tổng quan:")
+        logger.info(f"   Tổng samples: {report['total_samples']}")
+        logger.info(f"   Good: {report['good_samples']} ({report['good_samples']/report['total_samples']*100:.1f}%)")
+        logger.info(f"   Bad: {report['bad_samples']}")
+
+        # Thống kê
+        stats = report.get("statistics", {})
+        logger.info(f"\n📏 Độ dài:")
+        q_len = stats.get("question_length", {})
+        a_len = stats.get("answer_length", {})
+        logger.info(f"   Question: min={q_len.get('min', 0)}, max={q_len.get('max', 0)}, avg={q_len.get('avg', 0):.0f}")
+        logger.info(f"   Answer: min={a_len.get('min', 0)}, max={a_len.get('max', 0)}, avg={a_len.get('avg', 0):.0f}")
+
+        # Format issues
+        issues = report.get("format_issues", {})
+        total_issues = sum(issues.values())
+        if total_issues > 0:
+            logger.info(f"\n⚠️ Format issues: {total_issues}")
+            for issue_type, count in issues.items():
+                if count > 0:
+                    logger.info(f"   - {issue_type}: {count}")
+
+        # Near duplicates
+        near_dups = report.get("near_duplicates", {})
+        if near_dups.get("count", 0) > 0:
+            logger.info(f"\n🔄 Near-duplicates: {near_dups['count']}")
+
+        # Quality summary
+        quality = report.get("quality_summary", {})
+        health = quality.get("health_score", 0)
+        if health >= 80:
+            health_emoji = "🟢"
+        elif health >= 60:
+            health_emoji = "🟡"
+        else:
+            health_emoji = "🔴"
+
+        logger.info(f"\n{health_emoji} Health Score: {health}/100")
+        logger.info(f"   High quality (>=8): {quality.get('high_quality', 0)}")
+        logger.info(f"   Medium quality (7-8): {quality.get('medium_quality', 0)}")
+        logger.info(f"   Low quality (<7): {quality.get('low_quality', 0)}")
+
+        logger.info("="*60)
